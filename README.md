@@ -43,8 +43,3 @@ The MATLAB MEX functions need to be compiled before use.. To do so, run
     mex ddm_rt_dist_full.c ddm_rt_dist_lib.c
 
 at the command line. The location of the 'mex' executable might be OS-dependent.
-
-Further Information
--------------------
-
-For further information, visit the [homepage of Jan Drugowitsch](http://www.lnc.ens.fr/~jdrugowi/code_ddm.html)
