@@ -166,7 +166,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
             mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
                               "String expected after \"mnorm\"");
         if (mxGetString(prhs[cur_argin + 1], str_arg, sizeof(str_arg)) == 1 ||
-            strcmp(str_arg, "yes") != 0 && strcmp(str_arg, "no") != 0)
+            (strcmp(str_arg, "yes") != 0 && strcmp(str_arg, "no") != 0))
             mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
                               "\"yes\" or \"no\" expected after \"mnorm\"");
         normalise_mass = strcmp(str_arg, "yes") == 0;
