@@ -114,4 +114,29 @@ void ddm_rt_dist_const(double mu, double bound, double delta_t, int k_max,
 int ddm_rt_dist_w(double mu[], double bound[], double k, double delta_t,
                   int n_max, double g1[], double g2[]);
 
+/** fpt_asymlo - fpt for upper bound, for const drift/bounds
+ * The required arguments are
+ * c1 = (bu - bl)^2
+ * c2 = mu^2 / 2
+ * c3 = mu * bu
+ * w = -bl / (bu - bl)
+ * where mu = drift, bu and bl are upper and lower bounds.
+ **/
+double fpt_asymup(double t, double c1, double c2, double c3, double w);
+
+/** fpt_asymlo - fpt for lower bound, for const drift/bounds
+ * The required arguments are as for fpt_asymup, except c4, which is
+ * c4 = mu * bl
+ **/
+double fpt_asymlo(double t, double c1, double c2, double c4, double w);
+
+/** fpt_symup - fpt density at upper boundary, symmetric bounds
+ * The required arguments are
+ * c1 = 4 * bound^2
+ * c2 = mu^2 / 2
+ * c3 = mu * bound
+ * The density at the lower bound is exp(-2 mu bound) times the upper density
+ **/
+double fpt_symup(double t, double c1, double c2, double c3);
+
 #endif

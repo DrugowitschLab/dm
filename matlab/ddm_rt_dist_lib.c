@@ -17,8 +17,9 @@
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define PI 3.14159265358979323846
-#define PI_2 2.0 * PI
-#define SERIES_ACC 1e-25
+#define TWOPI (2.0 * PI)
+#define PISQR (PI * PI)
+#define SERIES_ACC 1e-29
 
 
 /** ddm_rt_dist_full - compute reaction time distribution
@@ -471,7 +472,7 @@ int ddm_rt_dist_const_mu(double mu, double bound[], double delta_t, int k_max,
                     * (g1[j] * exp(- 0.5 * diff1 * diff1 * norm_t_j)
                        * (bound_deriv_k1 - diff1 * norm_t_j)
                        + g2[j] * exp(- 0.5 * diff2 * diff2 * norm_t_j)
-                       * (bound_deriv_k1 - diff2 * norm_t_j));
+                       * (bound_deriv_k2 - diff2 * norm_t_j));
         }
         /* avoid negative densities that could appear due to numerical instab. */
         g1[k] = MAX(g1_k, 0);
@@ -482,6 +483,156 @@ int ddm_rt_dist_const_mu(double mu, double bound[], double delta_t, int k_max,
     free(norm_sqrt_t);
     free(norm_t);
     return 0;
+}
+
+
+/** useshortseries - choose between two series expansions
+ * from Navarro & Fuss (2009), Eq. (13)
+ **/
+int useshorttseries(double t, double tol)
+{
+    return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
+            sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0;
+}
+
+
+/** fpt_asymshort - series expansion for fpt for short t
+ * Implementing Navarro & Fuss (2009), Eq. (6) 
+ **/
+double fpt_asymshortt(double t, double w, double tol)
+{
+    const double b = pow(t, -1.5) / sqrt(TWOPI);
+    double f;
+    int k;
+    tol *= b;
+    t *= 2;
+    k = 1;
+    f = w * exp(-w * w / t);
+    while (1) {
+        double c, incr;
+        c = w + 2 * k;
+        incr = c * exp(-c * c / t);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * b;
+        c = w - 2 * k;
+        incr = c * exp(-c * c / t);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * b;
+        k += 1;
+    }
+}
+
+
+/** fpt_asymlongt - series expansion for fpt for long t
+ * implementing Navarro & Fuss (2009), Eq. (5)
+ **/
+double fpt_asymlongt(double t, double w, double tol)
+{
+    double f;
+    int k;
+    tol *= PI;
+    f = 0.0;
+    k = 1;
+    while (1) {
+        const double kpi = k * PI;
+        double incr;
+        incr = k * exp(- (kpi * kpi) * t / 2) * sin(kpi * w);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * PI;
+        k += 1;
+    }
+}
+
+
+/** fpt_asymfastseries - fpt lower density, mu=0, bounds {0,1}, starting at w
+ * The function chooses between the faster of two series expansions, depending
+ * on the given t. It returns the lower bound density at t.
+ **/
+double fpt_asymfastseries(double t, double w, double tol)
+{
+    if (t == 0.0)
+      return 0.0;
+    return useshorttseries(t, tol) ? fpt_asymshortt(t, w, tol) :
+                                     fpt_asymlongt(t, w, tol);
+}
+
+
+/** fpt_asymlo - fpt for upper bound, for const drift/bounds
+ * The required arguments are
+ * c1 = (bu - bl)^2
+ * c2 = mu^2 / 2
+ * c3 = mu * bu
+ * w = -bl / (bu - bl)
+ * where mu = drift, bu and bl are upper and lower bounds.
+ **/
+double fpt_asymup(double t, double c1, double c2, double c3, double w)
+{
+    return exp(c3 - c2 * t) / c1 * 
+        fpt_asymfastseries(t / c1, 1 - w, SERIES_ACC);
+}
+
+
+/** fpt_asymlo - fpt for lower bound, for const drift/bounds
+ * The required arguments are as for fpt_asymup, except c4, which is
+ * c4 = mu * bl
+ **/
+double fpt_asymlo(double t, double c1, double c2, double c4, double w)
+{
+    return exp(c4 - c2 * t) / c1 * fpt_asymfastseries(t / c1, w, SERIES_ACC);
+}
+
+
+/** fpt_symseries - series expansion for fpt lower density, symmetric bounds **/
+double fpt_symseries(double t, double a, double b, double tol)
+{
+    double f;
+    int twok;
+    tol *= b;
+    f = exp(-a);
+    twok = 3;
+    while (1) {
+        double incr;
+        incr = twok * exp(- (twok * twok) * a);
+        f -= incr;
+        if (incr < tol)
+            return f * b;
+        twok += 2;
+        incr = twok * exp(- (twok * twok) * a);
+        f += incr;
+        if (incr < tol)
+            return f * b;
+        twok += 2;
+    }
+}
+
+
+/** fpt_symfastseries - fpt lower density, mu=0, bounds {0,1}, starting at 0.5
+ * The function chooses between the faster of two series expansions, depending
+ * on the given t. It returns the lower bound density at t.
+ **/
+double fpt_symfastseries(double t, double tol)
+{
+    if (t == 0.0)
+        return 0.0;
+    return useshorttseries(t, tol) ?
+           fpt_symseries(t, 1 / (8 * t), 1 / sqrt(8 * PI * pow(t, 3)), tol) :
+           fpt_symseries(t, t * PISQR / 2, PI, tol);
+}
+
+
+/** fpt_symup - fpt density at upper boundary, symmetric bounds
+ * The required arguments are
+ * c1 = 4 * bound^2
+ * c2 = mu^2 / 2
+ * c3 = mu * bound
+ * The density at the lower bound is exp(-2 mu bound) times the upper density
+ **/
+double fpt_symup(double t, double c1, double c2, double c3)
+{
+    return exp(c3 - c2 * t) / c1 * fpt_symfastseries(t / c1, SERIES_ACC);
 }
 
 
@@ -497,33 +648,21 @@ int ddm_rt_dist_const_mu(double mu, double bound[], double delta_t, int k_max,
 void ddm_rt_dist_const(double mu, double bound, double delta_t, int k_max,
              double g1[], double g2[])
 {
-    double mu_bound, exp_mu_bound, sqrt_2_pi_bound, t;
+    const double c1 = 4 * (bound * bound);
+    const double c2 = (mu * mu) / 2;
+    const double c3 = mu * bound;
+    const double c4 = exp(-2 * c3);
+    double t;
     int i;
-    
+
     assert(mu > 0 && bound > 0 && delta_t > 0 && k_max > 0 &&
-    g1 != NULL && g2 != NULL);
-    
-    /* some constants */
-    mu_bound = -2 * mu * bound;
-    exp_mu_bound = exp(mu_bound);
-    sqrt_2_pi_bound = bound / sqrt(PI_2);
-    
-    /* series expansion approximation from Cox & Miller (1977) */    
+        g1 != NULL && g2 != NULL);
+
     t = delta_t;
     for (i = 0; i < k_max; ++i) {
-        double g = 0;
-        int j = 0;
-        double incr = SERIES_ACC + 1.0;
-        /* iterate until certain accuracy is reached */
-        while (incr >= SERIES_ACC) {
-            double x = ((2 * j + 1) * bound - mu * t);
-            incr = (2 * j + 1) * exp(mu_bound * j) * exp(- 0.5 / t * x * x);
-            g += ((j % 2) == 0 ? incr : (-incr));
-            j++;
-        }
-        g *= sqrt_2_pi_bound * pow(t, -1.5);
+        const double g = fpt_symup(t, c1, c2, c3);
         (*g1++) = MAX(g, 0);
-        (*g2++) = MAX(exp_mu_bound * g, 0);
+        (*g2++) = MAX(c4 * g, 0);
         t += delta_t;
     }
 }
@@ -586,7 +725,7 @@ int ddm_rt_dist_w(double mu[], double bound[], double k, double delta_t,
         /* initial values */
         double diff1 = bound_n - k * A_n;
         double diff2 = -bound_n - k * A_n;
-        double sqrt_A_n = sqrt(PI_2 * A_n);
+        double sqrt_A_n = sqrt(TWOPI * A_n);
         double tmp = bound_deriv_n - bound_n / A_n * a2_n;
         double g1_n = - exp(-0.5 * diff1 * diff1 / A_n) / sqrt_A_n * tmp;
 
@@ -596,7 +735,7 @@ int ddm_rt_dist_w(double mu[], double bound[], double k, double delta_t,
             double diff1_A, diff2_A;
             double bound_j = bound[j];
             double A_diff = A_n - A[j];
-            double sqrt_A_diff = sqrt(PI_2 * A_diff);
+            double sqrt_A_diff = sqrt(TWOPI * A_diff);
             diff1 = bound_n - bound_j;
             diff2 = bound_n + bound_j;
 
