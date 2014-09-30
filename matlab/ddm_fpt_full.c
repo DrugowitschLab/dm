@@ -62,58 +62,6 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 
-/** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
- *
- * Function makes sure that g1(t) >= 0, g2(t) >= 0, for all t, and that
- * (sum(g1) + sum(g2) * delta_t) = 1. It does so by eventually adding mass to
- * the last elements of g1 / g2, such that the ratio
- * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
- * unchanged.
- */
-void mnorm(double g1[], double g2[], int n, double delta_t)
-{
-    /* remove negative elements and compute sum */
-    double g1_sum = 0.0, g2_sum = 0.0, p;
-    int i;
-    for (i = 0; i < n; ++i) {
-        if (g1[i] < 0) g1[i] = 0;
-        else g1_sum += g1[i];
-        if (g2[i] < 0) g2[i] = 0;
-        else g2_sum += g2[i];
-    }
-    
-    /* adjust last elements accoring to ratio */
-    p = g1_sum / (g1_sum + g2_sum);
-    g1[n - 1] += p / delta_t - g1_sum;
-    g2[n - 1] += (1 - p) / delta_t - g2_sum;
-}
-
-
-/** creates a new vector, copies v, and fills the rest with fill_el
- * 
- * The new vector is of size new_size. If v_size > new_size then not all
- * elements of v are copied. If v_size < new_size, then the elements of the
- * new vector are filled up with fill_el.
- * 
- * The function returns NULL if it fails to allocate memory for the new vector.
- **/
-double* extend_vector(double v[], int v_size, int new_size, double fill_el)
-{
-    double *new_v;
-    int i;
-    
-    new_v = malloc(new_size * sizeof(double));
-    if (new_v == NULL)
-        return NULL;
-    
-    memcpy(new_v, v, sizeof(double) * MIN(v_size, new_size));
-    for (i = v_size; i < new_size; ++i)
-        new_v[i] = fill_el;
-    
-    return new_v;
-}
-
-
 /** the gateway function */
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {

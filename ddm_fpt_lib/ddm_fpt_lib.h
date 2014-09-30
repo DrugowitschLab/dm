@@ -136,4 +136,24 @@ double fpt_asymlo(double t, double c1, double c2, double c4, double w);
  **/
 double fpt_symup(double t, double c1, double c2, double c3);
 
+/** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
+ *
+ * Function makes sure that g1(t) >= 0, g2(t) >= 0, for all t, and that
+ * (sum(g1) + sum(g2) * delta_t) = 1. It does so by eventually adding mass to
+ * the last elements of g1 / g2, such that the ratio
+ * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
+ * unchanged.
+ */
+void mnorm(double g1[], double g2[], int n, double delta_t);
+
+/** creates a new vector, copies v, and fills the rest with fill_el
+ * 
+ * The new vector is of size new_size. If v_size > new_size then not all
+ * elements of v are copied. If v_size < new_size, then the elements of the
+ * new vector are filled up with fill_el.
+ * 
+ * The function returns NULL if it fails to allocate memory for the new vector.
+ **/
+double* extend_vector(double v[], int v_size, int new_size, double fill_el);
+
 #endif
