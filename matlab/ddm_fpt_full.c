@@ -1,21 +1,21 @@
 /**
- * Copyright (c) 2013, Jan Drugowitsch
+ * Copyright (c) 2013, 2014 Jan Drugowitsch
  * All rights reserved.
  * See the file LICENSE for licensing information.
  *
- * ddm_rt_dist_full.c - comuting the DDM reaction time distribution as described
- *                 in Smith (2000) "Stochastic Dynamic Models of Response Time
- *                 and Accurary: A Foundational Primer" and other sources. Drift
- *                 rate, bounds, and diffusion variance is allowed to vary over
- *                 time.
+ * ddm_fpt_full.c - computing the DDM first-passage time distribution as described
+ *                  in Smith (2000) "Stochastic Dynamic Models of Response Time
+ *                  and Accurary: A Foundational Primer" and other sources. Drift
+ *                  rate, bounds, and diffusion variance is allowed to vary over
+ *                  time.
  *
- * [g1, g2] = ddm_rt_dist_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
- *                             delta_t, t_max, [inv_leak])
+ * [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+ *                         delta_t, t_max, [inv_leak])
  *
  * mu, ..., b_up_deriv are all vectors in steps of delta_t. mu and sig2 are the
  * drift rate and variance, respectively. b_lo and b_up are the location of the
  * lower and upper bound, and b_lo_deriv and b_up_deriv are their time
- * derivatives. t_max is the maximum time up until which the reaction time
+ * derivatives. t_max is the maximum time up until which the first-passage time
  * distributions are evaluated. g1 and g2 hold the probability densities of
  * hitting the upper and lower bound, respectively, in steps of delta_t up to
  * and including t_max. If the given vectors are shorter than t_max, their last
@@ -34,7 +34,7 @@
  * where eta is zero-mean unit variance white noise. The bound is on x.
  * inv_leak defaults to 0 if not given.
  *
- * [g1, g2] = ddm_rt_dist(..., 'mnorm', 'yes')
+ * [g1, g2] = ddm_fpt_full(..., 'mnorm', 'yes')
  *
  * Causes both g1 and g2 to be normalised such that the densities integrate to
  * 1. The normalisation is performed by adding all missing mass to the last
@@ -48,7 +48,7 @@
 #include "mex.h"
 #include "matrix.h"
 
-#include "ddm_rt_dist_lib.h"
+#include "../ddm_fpt_lib/ddm_fpt_lib.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -122,43 +122,43 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     double *mu, *sig2, *b_lo, *b_up, *b_lo_deriv, *b_up_deriv, *mu_ext;
     double *sig2_ext, *b_lo_ext, *b_up_ext, *b_lo_deriv_ext, *b_up_deriv_ext;
     double delta_t, t_max, inv_leak;
-    /* [g1, g2] = rt_dist_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
-                              delta_t, t_max, [leak]) */
+    /* [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                               delta_t, t_max, [leak]) */
 
     /* Check argument number */
     if (nlhs != 2) {
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongOutputs", 
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongOutputs", 
                           "Wrong number of output arguments");
     }
     if (nrhs < 8) {
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInputs",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInputs",
                           "Too few input arguments");
     }
 
     /* Process first 8 arguments */
     if (!MEX_ARGIN_IS_REAL_VECTOR(0))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "First input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_VECTOR(1))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Second input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_VECTOR(2))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Third input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_VECTOR(3))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Fourth input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_VECTOR(4))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Fifth input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_VECTOR(5))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Sixth input argument expected to be a vector");
     if (!MEX_ARGIN_IS_REAL_DOUBLE(6))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Seventh input argument expected to be a double");
     if (!MEX_ARGIN_IS_REAL_DOUBLE(7))
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Eight input argument expected to be a double");
     mu_size = MAX(mxGetN(prhs[0]), mxGetM(prhs[0]));
     sig2_size = MAX(mxGetN(prhs[1]), mxGetM(prhs[1]));
@@ -175,21 +175,21 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     delta_t = mxGetScalar(prhs[6]);
     t_max = mxGetScalar(prhs[7]);
     if (delta_t <= 0.0)
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "delta_t needs to be larger than 0.0");
     if (t_max <= delta_t)
-        mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+        mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "t_max needs to be at least as large as delta_t");
 
     /* Process possible 9th non-string argument */
     cur_argin = 8;
     if (nrhs > cur_argin && !mxIsChar(prhs[cur_argin])) {
         if (!MEX_ARGIN_IS_REAL_DOUBLE(cur_argin))
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "Ninth input argument expected to be a double");
         inv_leak = mxGetScalar(prhs[cur_argin]);
         if (inv_leak < 0.0)
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "inv_leak needs to be non-negative");
         has_leak = 1;
         ++cur_argin;
@@ -200,25 +200,25 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         char str_arg[6];
         /* current only accept 'mnorm' string argument */
         if (!mxIsChar(prhs[cur_argin]))
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "String argument expected but not found");
         if (mxGetString(prhs[cur_argin], str_arg, sizeof(str_arg)) == 1 ||
             strcmp(str_arg, "mnorm") != 0)
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "\"mnorm\" string argument expected");
         /* this needs to be followed by "yes" or "no" */
         if (nrhs <= cur_argin + 1 || !mxIsChar(prhs[cur_argin + 1]))
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "String expected after \"mnorm\"");
         if (mxGetString(prhs[cur_argin + 1], str_arg, sizeof(str_arg)) == 1 ||
             (strcmp(str_arg, "yes") != 0 && strcmp(str_arg, "no") != 0))
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInput",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "\"yes\" or \"no\" expected after \"mnorm\"");
         normalise_mass = strcmp(str_arg, "yes") == 0;
         
         /* no arguments allowed after that */
         if (nrhs > cur_argin + 2)
-            mexErrMsgIdAndTxt("ddm_rt_dist:WrongInputs",
+            mexErrMsgIdAndTxt("ddm_fpt_full:WrongInputs",
                               "Too many input arguments");
     }
 
@@ -245,19 +245,19 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         free(b_up_ext);
         free(b_lo_deriv_ext);
         free(b_up_deriv_ext);
-        mexErrMsgIdAndTxt("ddm_rt_dist:OutOfMemory", "Out of memory");
+        mexErrMsgIdAndTxt("ddm_fpt_full:OutOfMemory", "Out of memory");
     }
     
     /* compute the pdf's */
     if (has_leak)
-        err = ddm_rt_dist_full_leak(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                                    b_lo_deriv_ext, b_up_deriv_ext,
-                                    inv_leak, delta_t, k_max,
-                                    mxGetPr(plhs[0]), mxGetPr(plhs[1]));
+        err = ddm_fpt_full_leak(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
+                                b_lo_deriv_ext, b_up_deriv_ext,
+                                inv_leak, delta_t, k_max,
+                                mxGetPr(plhs[0]), mxGetPr(plhs[1]));
     else
-        err = ddm_rt_dist_full(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                               b_lo_deriv_ext, b_up_deriv_ext, delta_t, k_max,
-                               mxGetPr(plhs[0]), mxGetPr(plhs[1]));
+        err = ddm_fpt_full(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
+                           b_lo_deriv_ext, b_up_deriv_ext, delta_t, k_max,
+                           mxGetPr(plhs[0]), mxGetPr(plhs[1]));
     
     free(mu_ext);
     free(sig2_ext);
@@ -267,7 +267,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     free(b_up_deriv_ext);
 
     if (err == -1)
-        mexErrMsgIdAndTxt("ddm_rt_dist:OutOfMemory", "Out of memory");
+        mexErrMsgIdAndTxt("ddm_fpt_full:OutOfMemory", "Out of memory");
 
     
     /* normalise mass, if requested */

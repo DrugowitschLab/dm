@@ -18,28 +18,32 @@ For constant drift and bounds, the functions compute the first-passage time dist
 
 Cox DR and Miller HD (1965). *The Theory of Stochastic Processes*. John Wiley & Sons, Inc.
 
+and
+
+Navarro DJ and Fuss IG (2009). Fast and accurate calculations for first-passage times in Wiener diffusion models. *Journal of Mathematical Psychology*, 53, 222-230.
+
 For all other cases, the implementation described in
 
-Smith PL (2000). Stochastic Dynamic Models of Response Time and Accuracy: A Foundational Primer. In *Journal of Mathematical Psychology*, 44 (3). 408-463.
+Smith PL (2000). Stochastic Dynamic Models of Response Time and Accuracy: A Foundational Primer. *Journal of Mathematical Psychology*, 44 (3). 408-463.
 
 is used.
 
-For details of the available C functions, see ddm_rt_dist_lib.h
+For details of the available C functions, see ``ddm_fpt_lib.h`` in the ``ddm_fpt_lib`` directory.
 
-The provided MATLAB MEX functions are
+The provided MATLAB MEX functions in the ``matlab`` directory are
 
-ddm_rt_dist: function for symmetric bounds. See ddm_rt_dist.m for usage information.
+``ddm_fpt``: function for symmetric bounds. See ``ddm_fpt.m`` for usage information.
 
-ddm_rt_dist_full: function for arbitrary bounds. See ddm_rt_dist_full.m for usage information.
+``ddm_fpt_full``: function for arbitrary bounds. See ``ddm_fpt_full.m`` for usage information.
 
 Usage
 -----
 
-To use the C library, include ddm_rt_dist_lib.h and link to compiled ddm_rt_dist_lib.c
+To use the C library, include ``ddm_fpt_lib.h`` and link to compiled ``ddm_fpt_lib.c``
 
-The MATLAB MEX functions need to be compiled before use.. To do so, run
+The MATLAB MEX functions need to be compiled before use. To do so, run
 
-    mex ddm_rt_dist.c ddm_rt_dist_lib.c
-    mex ddm_rt_dist_full.c ddm_rt_dist_lib.c
+    mex ddm_fpt.c ../ddm_fpt_lib/ddm_fpt_lib.c
+    mex ddm_fpt_full.c ../ddm_fpt_lib/ddm_fpt_lib.c
 
-at the command line. The location of the 'mex' executable might be OS-dependent.
+at the command line. The location of the ``mex`` executable might be OS-dependent.

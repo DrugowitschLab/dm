@@ -1,5 +1,5 @@
-[g1, g2] = ddm_rt_dist_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, ...
-                            delta_t, t_max, inv_leak)
+[g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, ...
+                        delta_t, t_max, inv_leak)
 %% computes the diffusion model first-passage time distributions
 %
 % The applied method is described in Smith (2000) "Stochastic Dynamic
@@ -7,13 +7,13 @@
 % sources. Drift rate, bounds, and diffusion variance are allowed to vary
 % over time.
 %
-% [g1, g2] = ddm_rt_dist_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
-%                             delta_t, t_max, [inv_leak])
+% [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+%                         delta_t, t_max, [inv_leak])
 %
 % mu, ..., b_up_deriv are all vectors in steps of delta_t. mu and sig2 are
 % the drift rate and variance, respectively. b_lo and b_up are the location
 % of the lower and upper bound, and b_lo_deriv and b_up_deriv are their
-% time derivatives. t_max is the maximum time up until which the reaction
+% time derivatives. t_max is the maximum time up until which the first-passage
 % time distributions are evaluated. g1 and g2 hold the probability
 % densities of hitting the upper and lower bound, respectively, in steps of
 % delta_t up to and including t_max. If the given vectors are shorter than
@@ -33,7 +33,7 @@
 % inv_leak defaults to 0 if not given.
 %
 %
-% [g1, g2] = ddm_rt_dist(..., 'mnorm', 'yes')
+% [g1, g2] = ddm_fpt_full(..., 'mnorm', 'yes')
 %
 % Causes both g1 and g2 to be normalised such that the densities integrate
 % to 1. The normalisation is performed by adding all missing mass to the
@@ -42,7 +42,7 @@
 % of the mass expected to occur after t_max. By default, 'mnorm' is set to
 % 'no'.
 %
-% Copyright (c) 2013, Jan Drugowitsch
+% Copyright (c) 2013, 2014 Jan Drugowitsch
 % All rights reserved.
 % See the file LICENSE for licensing information.
 
