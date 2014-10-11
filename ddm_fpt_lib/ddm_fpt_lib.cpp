@@ -9,17 +9,16 @@
 
 #include "ddm_fpt_lib.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <cassert>
+#include <string>
+#include <algorithm>
 
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
-#define PI 3.14159265358979323846
-#define TWOPI (2.0 * PI)
-#define PISQR (PI * PI)
-#define SERIES_ACC 1e-29
+const double PI = 3.14159265358979323846;
+const double TWOPI = 2 * PI;
+const double PISQR = PI * PI;
+const double SERIES_ACC = 1e-29;
 
 
 /** ddm_fpt_full - compute first-passage time distribution
@@ -53,8 +52,8 @@ int ddm_fpt_full(double mu[], double sig2[], double b_lo[], double b_up[],
            delta_t > 0 && k_max > 0 && g1 != NULL && g2 != NULL);
     
     /* allocate array memory */
-    cum_mu = malloc(k_max * sizeof(double));
-    cum_sig2 = malloc(k_max * sizeof(double));
+    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
+    cum_sig2 = static_cast<double*>(malloc(k_max * sizeof(double)));
     if (cum_mu == NULL || cum_sig2 == NULL) {
         free(cum_mu);
         free(cum_sig2);
@@ -129,8 +128,8 @@ int ddm_fpt_full(double mu[], double sig2[], double b_lo[], double b_up[],
                       sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
         }
         /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = MAX(g1_k, 0);
-        g2[k] = MAX(g2_k, 0);
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
     }
     
     free(cum_mu);
@@ -175,10 +174,10 @@ int ddm_fpt_full_leak(double mu[], double sig2[],
            g1 != NULL && g2 != NULL);
     
     /* allocate array memory */
-    cum_mu = malloc(k_max * sizeof(double));
-    cum_sig2 = malloc(k_max * sizeof(double));
-    disc = malloc(k_max * sizeof(double));
-    disc2 = malloc(k_max * sizeof(double));
+    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
+    cum_sig2 = static_cast<double*>(malloc(k_max * sizeof(double)));
+    disc = static_cast<double*>(malloc(k_max * sizeof(double)));
+    disc2 = static_cast<double*>(malloc(k_max * sizeof(double)));
     if (cum_mu == NULL || cum_sig2 == NULL) {
         free(cum_mu);
         free(cum_sig2);
@@ -274,8 +273,8 @@ int ddm_fpt_full_leak(double mu[], double sig2[],
                       sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
         }
         /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = MAX(g1_k, 0);
-        g2[k] = MAX(g2_k, 0);
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
     }
     
     free(cum_mu);
@@ -308,10 +307,10 @@ int ddm_fpt(double mu[], double bound[], double delta_t, int k_max,
            g1 != NULL && g2 != NULL);
     
     /* allocate array memory */
-    cum_mu = malloc(k_max * sizeof(double));
-    bound_deriv = malloc(k_max * sizeof(double));
-    norm_sqrt_t = malloc(k_max * sizeof(double));
-    norm_t = malloc(k_max * sizeof(double));
+    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
+    bound_deriv = static_cast<double*>(malloc(k_max * sizeof(double)));
+    norm_sqrt_t = static_cast<double*>(malloc(k_max * sizeof(double)));
+    norm_t = static_cast<double*>(malloc(k_max * sizeof(double)));
     if (cum_mu == NULL || bound_deriv == NULL || 
         norm_sqrt_t == NULL || norm_t == NULL) {
         free(cum_mu);
@@ -382,8 +381,8 @@ int ddm_fpt(double mu[], double bound[], double delta_t, int k_max,
                        * (bound_deriv_k2 - diff2 * norm_t_j));
         }
         /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = MAX(g1_k, 0);
-        g2[k] = MAX(g2_k, 0);
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
     }
 
     free(cum_mu);
@@ -416,9 +415,9 @@ int ddm_fpt_const_mu(double mu, double bound[], double delta_t, int k_max,
            g1 != NULL && g2 != NULL);
     
     /* allocate array memory */
-    bound_deriv = malloc(k_max * sizeof(double));
-    norm_sqrt_t = malloc(k_max * sizeof(double));
-    norm_t = malloc(k_max * sizeof(double));
+    bound_deriv = static_cast<double*>(malloc(k_max * sizeof(double)));
+    norm_sqrt_t = static_cast<double*>(malloc(k_max * sizeof(double)));
+    norm_t = static_cast<double*>(malloc(k_max * sizeof(double)));
     if (bound_deriv == NULL || norm_sqrt_t == NULL || norm_t == NULL) {
         free(bound_deriv);
         free(norm_sqrt_t);
@@ -475,8 +474,8 @@ int ddm_fpt_const_mu(double mu, double bound[], double delta_t, int k_max,
                        * (bound_deriv_k2 - diff2 * norm_t_j));
         }
         /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = MAX(g1_k, 0);
-        g2[k] = MAX(g1_k * exp(mu_2 * bound_k), 0);
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g1_k * exp(mu_2 * bound_k), 0.0);
     }
     
     free(bound_deriv);
@@ -661,8 +660,8 @@ void ddm_fpt_const(double mu, double bound, double delta_t, int k_max,
     t = delta_t;
     for (i = 0; i < k_max; ++i) {
         const double g = fpt_symup(t, c1, c2, c3);
-        (*g1++) = MAX(g, 0);
-        (*g2++) = MAX(c4 * g, 0);
+        (*g1++) = std::max(g, 0.0);
+        (*g2++) = std::max(c4 * g, 0.0);
         t += delta_t;
     }
 }
@@ -691,9 +690,9 @@ int ddm_fpt_w(double mu[], double bound[], double k, double delta_t,
            n_max > 0 &&  g1 != NULL && g2 != NULL);
     
     /* allocate array memory */
-    a2 = malloc(n_max * sizeof(double));
-    A = malloc(n_max * sizeof(double));
-    bound_deriv = malloc(n_max * sizeof(double));
+    a2 = static_cast<double*>(malloc(n_max * sizeof(double)));
+    A = static_cast<double*>(malloc(n_max * sizeof(double)));
+    bound_deriv = static_cast<double*>(malloc(n_max * sizeof(double)));
     if (a2 == NULL || A == NULL || bound_deriv == NULL) {
         free(a2);
         free(A);
@@ -748,8 +747,8 @@ int ddm_fpt_w(double mu[], double bound[], double k, double delta_t,
                         * (bound_deriv_n - a2_n * diff2 / A_diff));
         }
         /* avoid negative densities that could appear due to numerical instab. */
-        g1[n] = MAX(g1_n, 0);
-        g2[n] = MAX(g1_n * exp(k_2 * bound_n), 0);
+        g1[n] = std::max(g1_n, 0.0);
+        g2[n] = std::max(g1_n * exp(k_2 * bound_n), 0.0);
     }
 
     free(a2);
@@ -799,11 +798,11 @@ double* extend_vector(double v[], int v_size, int new_size, double fill_el)
     double *new_v;
     int i;
     
-    new_v = malloc(new_size * sizeof(double));
+    new_v = static_cast<double*>(malloc(new_size * sizeof(double)));
     if (new_v == NULL)
         return NULL;
     
-    memcpy(new_v, v, sizeof(double) * MIN(v_size, new_size));
+    memcpy(new_v, v, sizeof(double) * std::min(v_size, new_size));
     for (i = v_size; i < new_size; ++i)
         new_v[i] = fill_el;
     

@@ -3,11 +3,11 @@
  * All rights reserved.
  * See the file LICENSE for licensing information.
  *
- * ddm_fpt_full.c - computing the DDM first-passage time distribution as described
- *                  in Smith (2000) "Stochastic Dynamic Models of Response Time
- *                  and Accurary: A Foundational Primer" and other sources. Drift
- *                  rate, bounds, and diffusion variance is allowed to vary over
- *                  time.
+ * ddm_fpt_full.cpp - computing the DDM first-passage time distribution as described
+ *                    in Smith (2000) "Stochastic Dynamic Models of Response Time
+ *                    and Accurary: A Foundational Primer" and other sources. Drift
+ *                    rate, bounds, and diffusion variance is allowed to vary over
+ *                    time.
  *
  * [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
  *                         delta_t, t_max, [inv_leak])
@@ -50,16 +50,14 @@
 
 #include "../ddm_fpt_lib/ddm_fpt_lib.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
+#include <cmath>
+#include <cstdlib>
+#include <string>
+#include <cassert>
+#include <algorithm>
 
 #define MEX_ARGIN_IS_REAL_DOUBLE(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) == 1)
 #define MEX_ARGIN_IS_REAL_VECTOR(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && ((mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) >= 1) || (mxGetN(prhs[arg_idx]) >= 1 && mxGetM(prhs[arg_idx]) == 1)))
-
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 
 /** the gateway function */
@@ -108,12 +106,12 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     if (!MEX_ARGIN_IS_REAL_DOUBLE(7))
         mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Eight input argument expected to be a double");
-    mu_size = MAX(mxGetN(prhs[0]), mxGetM(prhs[0]));
-    sig2_size = MAX(mxGetN(prhs[1]), mxGetM(prhs[1]));
-    b_lo_size = MAX(mxGetN(prhs[2]), mxGetM(prhs[2]));
-    b_up_size = MAX(mxGetN(prhs[3]), mxGetM(prhs[3]));
-    b_lo_deriv_size = MAX(mxGetN(prhs[4]), mxGetM(prhs[4]));
-    b_up_deriv_size = MAX(mxGetN(prhs[5]), mxGetM(prhs[5]));
+    mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
+    sig2_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
+    b_lo_size = std::max(mxGetN(prhs[2]), mxGetM(prhs[2]));
+    b_up_size = std::max(mxGetN(prhs[3]), mxGetM(prhs[3]));
+    b_lo_deriv_size = std::max(mxGetN(prhs[4]), mxGetM(prhs[4]));
+    b_up_deriv_size = std::max(mxGetN(prhs[5]), mxGetM(prhs[5]));
     mu = mxGetPr(prhs[0]);
     sig2 = mxGetPr(prhs[1]);
     b_lo = mxGetPr(prhs[2]);

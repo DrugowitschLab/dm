@@ -3,11 +3,11 @@
  * All rights reserved.
  * See the file LICENSE for licensing information.
  *
- * ddm_fpt.c - comuting the DDM first-passage time distribution as described in
- *             Smith (2000) "Stochastic Dynamic Models of Response Time and 
- *             Accurary: A Foundational Primer" and other sources. Both the
- *             drift rate and the (symmetric) bound can vary over time.
- *             A variant for weighted accumulation is also provided.
+ * ddm_fpt.cpp - comuting the DDM first-passage time distribution as described in
+ *               Smith (2000) "Stochastic Dynamic Models of Response Time and 
+ *               Accurary: A Foundational Primer" and other sources. Both the
+ *               drift rate and the (symmetric) bound can vary over time.
+ *               A variant for weighted accumulation is also provided.
  *
  * [g1, g2] = ddm_fpt(mu, bound, delta_t, t_max, ...)
  *
@@ -53,16 +53,14 @@
 
 #include "../ddm_fpt_lib/ddm_fpt_lib.h"
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
+#include <cmath>
+#include <cstdlib>
+#include <string>
+#include <cassert>
+#include <algorithm>
 
 #define MEX_ARGIN_IS_REAL_DOUBLE(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) == 1)
 #define MEX_ARGIN_IS_REAL_VECTOR(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && ((mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) >= 1) || (mxGetN(prhs[arg_idx]) >= 1 && mxGetM(prhs[arg_idx]) == 1)))
-
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 
 /** the gateway function */
@@ -97,9 +95,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     if (!MEX_ARGIN_IS_REAL_DOUBLE(3))
         mexErrMsgIdAndTxt("ddm_fpt:WrongInput",
                           "Forth input argument expected to be a double");
-    mu_size = MAX(mxGetN(prhs[0]), mxGetM(prhs[0]));
+    mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
     mu = mxGetPr(prhs[0]);
-    bound_size = MAX(mxGetN(prhs[1]), mxGetM(prhs[1]));
+    bound_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
     bound = mxGetPr(prhs[1]);
     delta_t = mxGetScalar(prhs[2]);
     t_max = mxGetScalar(prhs[3]);
@@ -160,20 +158,20 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         double *mu_ext, *bound_ext, last_mu, last_bound;
         int i, err;
         
-        mu_ext = malloc(k_max * sizeof(double));
-        bound_ext = malloc(k_max * sizeof(double));
+        mu_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
+        bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
         if (mu_ext == NULL || bound_ext ==  NULL) {
             free(mu_ext);
             free(bound_ext);
             mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
         }
 
-        memcpy(mu_ext, mu, sizeof(double) * MIN(mu_size, k_max));
+        memcpy(mu_ext, mu, sizeof(double) * std::min(mu_size, k_max));
         last_mu = mu[mu_size - 1];
         for (i = mu_size; i < k_max; ++i)
             mu_ext[i] = last_mu;
 
-        memcpy(bound_ext, bound, sizeof(double) * MIN(bound_size, k_max));
+        memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
         last_bound = bound[bound_size - 1];
         for (i = bound_size; i < k_max; ++i)
             bound_ext[i] = last_bound;
@@ -198,11 +196,11 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
             double *bound_ext, last_bound;
             int i, err;
             
-            bound_ext = malloc(k_max * sizeof(double));
+            bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
             if (bound_ext == NULL)
                 mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
 
-            memcpy(bound_ext, bound, sizeof(double) * MIN(bound_size, k_max));
+            memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
             last_bound = bound[bound_size - 1];
             for (i = bound_size; i < k_max; ++i)
                 bound_ext[i] = last_bound;
@@ -222,20 +220,20 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         double *mu_ext, *bound_ext, last_mu, last_bound;
         int i, err;
         
-        mu_ext = malloc(k_max * sizeof(double));
-        bound_ext = malloc(k_max * sizeof(double));
+        mu_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
+        bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
         if (mu_ext == NULL || bound_ext ==  NULL) {
             free(mu_ext);
             free(bound_ext);
             mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
         }
 
-        memcpy(mu_ext, mu, sizeof(double) * MIN(mu_size, k_max));
+        memcpy(mu_ext, mu, sizeof(double) * std::min(mu_size, k_max));
         last_mu = mu[mu_size - 1];
         for (i = mu_size; i < k_max; ++i)
             mu_ext[i] = last_mu;
 
-        memcpy(bound_ext, bound, sizeof(double) * MIN(bound_size, k_max));
+        memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
         last_bound = bound[bound_size - 1];
         for (i = bound_size; i < k_max; ++i)
             bound_ext[i] = last_bound;
