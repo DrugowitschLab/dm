@@ -3,22 +3,527 @@
  * All rights reserved.
  * See the file LICENSE for licensing information.
  *  
- * ddm_fpt_lib.c - Functions that compute the first-passage time distributions
- *                 of drift-diffusion models.
+ * ddm_fpt_lib.cpp - Functions that compute the first-passage time distributions
+ *                   of drift-diffusion models.
  **/
 
 #include "ddm_fpt_lib.h"
 
-#include <cmath>
-#include <cstdlib>
 #include <cassert>
-#include <string>
-#include <algorithm>
+#include <vector>
 
-const double PI = 3.14159265358979323846;
-const double TWOPI = 2 * PI;
-const double PISQR = PI * PI;
-const double SERIES_ACC = 1e-29;
+DMBase* DMBase::create(const ExtArray& drift, const ExtArray& bound,
+                       value_t dt)
+{
+    if (drift.isconst()) {
+        if (bound.isconst())
+            return new DMConstDriftConstBound(drift[0], bound[0], dt);
+        else
+            return new DMConstDriftVarBound(drift[0], bound, dt);
+    } else
+        return new DMVarDriftVarBound(drift, bound, dt);
+}
+
+
+DMBase* DMBase::createw(const ExtArray& drift, const ExtArray& bound,
+                        value_t k, value_t dt)
+{
+    return new DMWVarDriftVarBound(drift, bound, k, dt);
+}
+
+
+DMBase* DMBase::create(const ExtArray& drift, const ExtArray& sig2,
+                       const ExtArray& b_lo, const ExtArray& b_up,
+                       const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
+                       value_t dt, value_t invleak)
+{
+    const bool unit_sig2 = (sig2.isconst() <= 1 && sig2[0] == 1.0);
+    const bool infinvleak = isinf(invleak);
+    // TODO: add more specialised cases
+    if (infinvleak)
+        return new DMGeneralDeriv(drift, sig2, b_lo, b_up,
+                                  b_lo_deriv, b_up_deriv, dt);
+    else
+        return new DMGeneralLeakDeriv(drift, sig2, b_lo, b_up,
+                                      b_lo_deriv, b_up_deriv, invleak, dt);
+}
+
+
+void DMConstDriftConstBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+
+    const value_t c1 = 4 * (bound * bound);
+    const value_t c2 = (drift * drift) / 2;
+    const value_t c3 = drift * bound;
+    const value_t c4 = exp(-2 * c3);
+
+    value_t t = dt;
+    for (int i = 0; i < n; ++i) {
+        const value_t g = fpt_symup(t, c1, c2, c3);
+        g1[i] = std::max(g, 0.0);
+        g2[i] = std::max(c4 * g, 0.0);
+        t += dt;
+    }
+}
+
+
+// fpt_symseries - series expansion for fpt lower density, symmetric bounds
+DMBase::value_t DMConstDriftConstBound::fpt_symseries(value_t t, value_t a,
+                                                      value_t b, value_t tol)
+{
+    tol *= b;
+    double f = exp(-a);
+    int twok = 3;
+    while (1) {
+        double incr = twok * exp(- (twok * twok) * a);
+        f -= incr;
+        if (incr < tol)
+            return f * b;
+        twok += 2;
+        incr = twok * exp(- (twok * twok) * a);
+        f += incr;
+        if (incr < tol)
+            return f * b;
+        twok += 2;
+    }
+}
+
+
+void DMConstDriftConstABound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+
+    const value_t bdiff = b_up - b_lo;
+    const value_t c1 = bdiff * bdiff;
+    const value_t c2 = drift * drift / 2;
+    const value_t c3 = drift * b_up;
+    const value_t c4 = drift * b_lo;
+    const value_t w = - b_lo / bdiff;
+
+    value_t t = dt;
+    for (int i = 0; i < n; ++i) {
+        g1[i] = std::max(fpt_asymup(t, c1, c2, c3, w), 0.0);
+        g2[i] = std::max(fpt_asymlo(t, c1, c2, c4, w), 0.0);
+        t += dt;
+    }
+}
+
+
+// series expansion for fpt for short t, Navarro & Fuss (2009), Eq. (6) 
+DMBase::value_t DMConstDriftConstABound::fpt_asymshortt(value_t t, value_t w, value_t tol)
+{
+    const value_t b = pow(t, -1.5) / sqrt(TWOPI);
+    tol *= b;
+    t *= 2;
+    size_t k = 1;
+    value_t f = w * exp(-w * w / t);
+    while (1) {
+        value_t c = w + 2 * k;
+        value_t incr = c * exp(-c * c / t);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * b;
+        c = w - 2 * k;
+        incr = c * exp(-c * c / t);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * b;
+        k += 1;
+    }
+}
+
+
+// series expansion for fpt for long t, Navarro & Fuss (2009), Eq. (5)
+DMBase::value_t DMConstDriftConstABound::fpt_asymlongt(value_t t, value_t w, value_t tol)
+{
+    tol *= PI;
+    value_t f = 0.0;
+    size_t k = 1;
+    while (1) {
+        const value_t kpi = k * PI;
+        value_t incr = k * exp(- (kpi * kpi) * t / 2) * sin(kpi * w);
+        f += incr;
+        if (fabs(incr) < tol)
+            return f * PI;
+        k += 1;
+    }
+}
+
+
+void DMConstDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+
+    /* precompute some constants */
+    const double dt_2 = 2.0 * dt;
+    const double pi_dt_2 = PI * dt_2;
+    const double drift_dt = dt * drift;
+    const double drift_2 = -2 * drift;
+
+    /* derivative of bound */
+    std::vector<double> bound_deriv(n);
+    for (int j = 1; j < n; ++j) {
+        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
+    }
+    bound_deriv[n - 1] = bound_deriv[n - 2];
+
+    /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * dt * (i + 1)) 
+       norm_t[i] = 1 / (dt * (i + 1)) */
+    std::vector<double> norm_sqrt_t(n);
+    std::vector<double> norm_t(n);
+    for (int j = 0; j < n; ++j) {
+        norm_sqrt_t[j] = 1.0 / sqrt(pi_dt_2 * (j + 1.0));
+        norm_t[j] = 1.0 / (dt * (j + 1.0));
+    }
+
+    /* fill g1 recursively, g2 is based on g1 */
+    for (int k = 0; k < n; ++k) {
+        /* speed increase by reducing array access */
+        const double bound_k = bound[k];
+        const double bound_deriv_k1 = bound_deriv[k] - drift;
+        const double bound_deriv_k2 = -bound_deriv[k] - drift;
+        const double cum_drift_k = (k + 1) * drift_dt;
+        const double norm_t_j = norm_t[k];
+        const double norm_sqrt_t_j = norm_sqrt_t[k];
+        /* initial values */
+        double g1_k = -norm_sqrt_t_j
+                      * exp(- 0.5 * (bound_k - cum_drift_k) * (bound_k - cum_drift_k) * norm_t_j)
+                      * (bound_deriv_k1 - (bound_k - cum_drift_k) * norm_t_j);
+        /* relation to previous values */
+        for (int j = 0; j < k; ++j) {
+            /* reducing array access + pre-compute values */
+            const double bound_j = bound[j];
+            const double cum_drift_k_j = (k - j) * drift_dt;
+            const double diff1 = bound_k - bound_j - cum_drift_k_j;
+            const double diff2 = bound_k + bound_j - cum_drift_k_j;
+            const double norm_t_j = norm_t[k - j - 1];
+            const double norm_sqrt_t_j = norm_sqrt_t[k - j - 1];
+            /* add values */
+            g1_k += dt * norm_sqrt_t_j
+                    * (g1[j] * exp(- 0.5 * diff1 * diff1 * norm_t_j)
+                       * (bound_deriv_k1 - diff1 * norm_t_j)
+                       + g2[j] * exp(- 0.5 * diff2 * diff2 * norm_t_j)
+                       * (bound_deriv_k2 - diff2 * norm_t_j));
+        }
+        /* avoid negative densities that could appear due to numerical instab. */
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g1_k * exp(drift_2 * bound_k), 0.0);
+    }
+}
+
+
+void DMVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+
+    /* precompute some constants */
+    const double dt_2 = 2.0 * dt;
+    const double pi_dt_2 = PI * dt_2;
+    
+    /* cumulative drift, and derivative of bound */
+    std::vector<double> cum_drift(n);
+    std::vector<double> bound_deriv(n);
+    double curr_cum_drift = dt * drift[0];
+    cum_drift[0] = curr_cum_drift;
+    for (int j = 1; j < n; ++j) {
+        curr_cum_drift += dt * drift[j];
+        cum_drift[j] = curr_cum_drift;
+        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
+    }
+    bound_deriv[n - 1] = bound_deriv[n - 2];
+
+    /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * dt * (i + 1)) 
+       norm_t[i] = 1 / (dt * (i + 1)) */
+    std::vector<double> norm_sqrt_t(n);
+    std::vector<double> norm_t(n);
+    for (int j = 0; j < n; ++j) {
+        norm_sqrt_t[j] = 1.0 / sqrt(pi_dt_2 * (j + 1.0));
+        norm_t[j] = 1.0 / (dt * (j + 1.0));
+    }
+
+    /* fill up g1 and g2 recursively */
+    for (int k = 0; k < n; ++k) {
+        /* speed increase by reducing array access */
+        const double bound_k = bound[k];
+        const double bound_deriv_k1 = bound_deriv[k] - drift[k];
+        const double bound_deriv_k2 = -bound_deriv[k] - drift[k];
+        const double cum_drift_k = cum_drift[k];
+        const double norm_t_j = norm_t[k];
+        const double norm_sqrt_t_j = norm_sqrt_t[k];
+        /* initial values */
+        double g1_k = -norm_sqrt_t_j
+                      * exp(- 0.5 * (bound_k - cum_drift_k) * (bound_k - cum_drift_k) * norm_t_j)
+                      * (bound_deriv_k1 - (bound_k - cum_drift_k) * norm_t_j);
+        double g2_k = norm_sqrt_t_j
+                      * exp(- 0.5 * (-bound_k - cum_drift_k) * (-bound_k - cum_drift_k) * norm_t_j)
+                      * (bound_deriv_k2 - (-bound_k - cum_drift_k) * norm_t_j);
+        /* relation to previous values */
+        for (int j = 0; j < k; ++j) {
+            /* reducing array access + pre-compute values */
+            const double bound_j = bound[j];
+            const double cum_drift_k_j = cum_drift_k - cum_drift[j];
+            const double diff11 = bound_k - bound_j - cum_drift_k_j;
+            const double diff12 = bound_k + bound_j - cum_drift_k_j;
+            const double norm_t_j = norm_t[k - j - 1];
+            const double norm_sqrt_t_j = norm_sqrt_t[k - j - 1];
+            /* add values */
+            g1_k += dt * norm_sqrt_t_j
+                    * (g1[j] * exp(- 0.5 * diff11 * diff11 * norm_t_j)
+                       * (bound_deriv_k1 - diff11 * norm_t_j)
+                       + g2[j] * exp(- 0.5 * diff12 * diff12 * norm_t_j)
+                       * (bound_deriv_k1 - diff12 * norm_t_j));
+            const double diff21 = -bound_k - bound_j - cum_drift_k_j;
+            const double diff22 = -bound_k + bound_j - cum_drift_k_j;
+            g2_k -= dt * norm_sqrt_t_j
+                    * (g1[j] * exp(- 0.5 * diff21 * diff21 * norm_t_j)
+                       * (bound_deriv_k2 - diff21 * norm_t_j)
+                       + g2[j] * exp(- 0.5 * diff22 * diff22 * norm_t_j)
+                       * (bound_deriv_k2 - diff22 * norm_t_j));
+        }
+        /* avoid negative densities that could appear due to numerical instab. */
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
+    }
+}
+
+
+void DMWVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+
+    /* pre-compute value */
+    const double k_2 = -2 * k;
+
+    /* a2(t) = drift(t)^2, A_t(t) = \int^t a2(s) ds, and derivative of bound */
+    std::vector<double> a2(n);
+    std::vector<double> A(n);
+    std::vector<double> bound_deriv(n);
+    double cum_a2 = dt * (a2[0] = drift[0] * drift[0]);
+    A[0] = cum_a2;
+    for (int j = 1; j < n; ++j) {
+        cum_a2 += dt * (a2[j] = drift[j] * drift[j]);
+        A[j] = cum_a2;
+        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
+    }
+    bound_deriv[n - 1] = bound_deriv[n - 2];
+
+    /* fill up g1 and g2 recursively */
+    for (int i = 0; i < n; ++i) {
+        /* reduce array access */
+        const double bound_i = bound[i];
+        const double a2_i = a2[i];
+        const double A_i = A[i];
+        const double bound_deriv_i = bound_deriv[i];
+
+        /* initial values */
+        const double diff1 = bound_i - k * A_i;
+        const double sqrt_A_i = sqrt(TWOPI * A_i);
+        const double tmp = bound_deriv_i - bound_i / A_i * a2_i;
+        double g1_i = - exp(-0.5 * diff1 * diff1 / A_i) / sqrt_A_i * tmp;
+
+        /* relation to previous values */
+        for (int j = 0; j < i; ++j) {
+            /* reduce array access and pre-compute values */
+            const double bound_j = bound[j];
+            const double A_diff = A_i - A[j];
+            const double sqrt_A_diff = sqrt(TWOPI * A_diff);
+            const double diff1 = bound_i - bound_j;
+            const double diff2 = bound_i + bound_j;
+            const double diff1_A = diff1 - k * A_diff;
+            const double diff2_A = diff2 - k * A_diff;
+            g1_i += dt / sqrt_A_diff * (
+                        g1[j] * exp(-0.5 * diff1_A * diff1_A / A_diff) 
+                        * (bound_deriv_i - a2_i * diff1 / A_diff)
+                      + g2[j] * exp(-0.5 * diff2_A * diff2_A / A_diff)
+                        * (bound_deriv_i - a2_i * diff2 / A_diff));
+        }
+        /* avoid negative densities that could appear due to numerical instab. */
+        g1[i] = std::max(g1_i, 0.0);
+        g2[i] = std::max(g1_i * exp(k_2 * bound_i), 0.0);
+    }
+}
+
+
+void DMGeneralDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+    
+    /* precompute some constants */
+    const double sqrt_2_pi = 1 / sqrt(2 * PI);
+    const double dt_sqrt_2_pi = dt * sqrt_2_pi;
+    
+    /* cumulative mu and sig2 */
+    std::vector<double> cum_drift(n);
+    std::vector<double> cum_sig2(n);
+    double curr_cum_drift = dt * drift[0];
+    cum_drift[0] = curr_cum_drift;
+    double curr_cum_sig2 = dt * sig2[0];
+    cum_sig2[0] = curr_cum_sig2;
+    for (int j = 1; j < n; ++j) {
+        curr_cum_drift += dt * drift[j];
+        cum_drift[j] = curr_cum_drift;
+        curr_cum_sig2 += dt * sig2[j];
+        cum_sig2[j] = curr_cum_sig2;
+    }
+    
+    /* fill up g1 and g2 recursively */
+    for (int k = 0; k < n; ++k) {
+        /* speed increase by reducing array access */
+        const double sig2_k = sig2[k];
+        const double b_up_k = b_up[k];
+        const double b_lo_k = b_lo[k];
+        const double cum_drift_k = cum_drift[k];
+        const double cum_sig2_k = cum_sig2[k];
+        const double sqrt_cum_sig2_k = sqrt(cum_sig2_k);
+        const double b_up_deriv_k = b_up_deriv[k] - drift[k];
+        const double b_lo_deriv_k = b_lo_deriv[k] - drift[k];
+        
+        /* initial values */
+        double g1_k = -sqrt_2_pi / sqrt_cum_sig2_k * 
+                      exp(-0.5 * (b_up_k - cum_drift_k) * (b_up_k - cum_drift_k) / 
+                          cum_sig2_k) *
+                      (b_up_deriv_k - sig2_k * (b_up_k - cum_drift_k) / cum_sig2_k);
+        double g2_k = sqrt_2_pi / sqrt_cum_sig2_k *
+                      exp(-0.5 * (b_lo_k - cum_drift_k) * (b_lo_k - cum_drift_k) /
+                          cum_sig2_k) *
+                      (b_lo_deriv_k - sig2_k * (b_lo_k - cum_drift_k) / cum_sig2_k);
+        /* relation to previous values */
+        for (int j = 0; j < k; ++j) {
+            /* reducing array access + pre-compute values */
+            const double cum_sig2_diff_j = cum_sig2_k - cum_sig2[j];
+            const double sqrt_cum_sig2_diff_j = sqrt(cum_sig2_diff_j);
+            const double cum_drift_diff_j = cum_drift[j] - cum_drift_k;
+            const double b_up_k_up_j_diff = b_up_k - b_up[j] + cum_drift_diff_j;
+            const double b_up_k_lo_j_diff = b_up_k - b_lo[j] + cum_drift_diff_j;
+            const double b_lo_k_up_j_diff = b_lo_k - b_up[j] + cum_drift_diff_j;
+            const double b_lo_k_lo_j_diff = b_lo_k - b_lo[j] + cum_drift_diff_j;
+            /* add values */
+            g1_k += dt_sqrt_2_pi / sqrt_cum_sig2_diff_j *
+                    (g1[j] * exp(-0.5 * b_up_k_up_j_diff * b_up_k_up_j_diff / 
+                                 cum_sig2_diff_j) *
+                     (b_up_deriv_k - 
+                      sig2_k * b_up_k_up_j_diff / cum_sig2_diff_j) +
+                     g2[j] * exp(-0.5 * b_up_k_lo_j_diff * b_up_k_lo_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_up_deriv_k - 
+                      sig2_k * b_up_k_lo_j_diff / cum_sig2_diff_j));
+            g2_k -= dt_sqrt_2_pi / sqrt_cum_sig2_diff_j *
+                    (g1[j] * exp(-0.5 * b_lo_k_up_j_diff * b_lo_k_up_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_lo_deriv_k -
+                      sig2_k * b_lo_k_up_j_diff / cum_sig2_diff_j) +
+                     g2[j] * exp(-0.5 * b_lo_k_lo_j_diff * b_lo_k_lo_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_lo_deriv_k -
+                      sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
+        }
+        /* avoid negative densities that could appear due to numerical instab. */
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
+    }
+}
+
+
+void DMGeneralLeakDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
+{
+    assert(n > 0);
+    
+    /* precompute some constants */
+    const double sqrt_2_pi = 1 / sqrt(2 * PI);
+    const double dt_sqrt_2_pi = dt * sqrt_2_pi;
+    const double exp_leak = exp(- dt * invleak);
+    const double exp2_leak = exp(- 2 * dt * invleak);
+    
+    /* cumulative mu and sig2, and discount (leak) */
+    std::vector<double> cum_drift(n);
+    std::vector<double> cum_sig2(n);
+    std::vector<double> disc(n);
+    double curr_cum_drift = dt * drift[0];
+    cum_drift[0] = curr_cum_drift;
+    double curr_cum_sig2 = dt * sig2[0];
+    cum_sig2[0] = curr_cum_sig2;
+    double curr_disc = exp_leak;
+    disc[0] = curr_disc;
+    for (int j = 1; j < n; ++j) {
+        curr_cum_drift = exp_leak * curr_cum_drift + dt * drift[j];
+        cum_drift[j] = curr_cum_drift;
+        curr_cum_sig2 = exp2_leak * curr_cum_sig2 + dt * sig2[j];
+        cum_sig2[j] = curr_cum_sig2;
+        curr_disc *= exp_leak;
+        disc[j] = curr_disc;
+    }
+    /* double discount (leak),
+     * note that  disc[k - j - 1] = exp(- invleak dt (k - j))
+     *           disc2[k - j - 1] = exp(- 2 invleak dt (k - j))
+     * such that half of disc can be used to compute disc2 */
+    std::vector<double> disc2(n);
+    int k = (int) floor(((double) (n - 1)) / 2);
+    for (int j = 0; j <= k; ++j)
+        disc2[j] = disc[2 * j + 1];
+    curr_disc = disc2[k];
+    for (int j = k + 1; j < n; ++j) {
+        curr_disc *= exp2_leak;
+        disc2[j] = curr_disc;
+    }
+    
+    /* fill up g1 and g2 recursively */
+    for (k = 0; k < n; ++k) {
+        /* speed increase by reducing array access */
+        const double sig2_k = sig2[k];
+        const double b_up_k = b_up[k];
+        const double b_lo_k = b_lo[k];
+        const double cum_drift_k = cum_drift[k];
+        const double cum_sig2_k = cum_sig2[k];
+        const double sqrt_cum_sig2_k = sqrt(cum_sig2_k);
+        const double b_up_deriv_k = b_up_deriv[k] + invleak * b_up_k - drift[k];
+        const double b_lo_deriv_k = b_lo_deriv[k] + invleak * b_lo_k - drift[k];
+        
+        /* initial values */
+        double g1_k = -sqrt_2_pi / sqrt_cum_sig2_k * 
+                      exp(-0.5 * (b_up_k - cum_drift_k) * (b_up_k - cum_drift_k) / 
+                          cum_sig2_k) *
+                      (b_up_deriv_k - sig2_k * (b_up_k - cum_drift_k) / cum_sig2_k);
+        double g2_k = sqrt_2_pi / sqrt_cum_sig2_k *
+                      exp(-0.5 * (b_lo_k - cum_drift_k) * (b_lo_k - cum_drift_k) /
+                          cum_sig2_k) *
+                      (b_lo_deriv_k - sig2_k * (b_lo_k - cum_drift_k) / cum_sig2_k);
+        /* relation to previous values */
+        for (int j = 0; j < k; ++j) {
+            /* reducing array access + pre-compute values */
+            const double disc_j = disc[k - j - 1];
+            const double cum_sig2_diff_j = cum_sig2_k - disc2[k - j - 1] * cum_sig2[j];
+            const double sqrt_cum_sig2_diff_j = sqrt(cum_sig2_diff_j);
+            const double cum_drift_diff_j = disc_j * cum_drift[j] - cum_drift_k;
+            const double b_up_k_up_j_diff = b_up_k - disc_j * b_up[j] + cum_drift_diff_j;
+            const double b_up_k_lo_j_diff = b_up_k - disc_j * b_lo[j] + cum_drift_diff_j;
+            const double b_lo_k_up_j_diff = b_lo_k - disc_j * b_up[j] + cum_drift_diff_j;
+            const double b_lo_k_lo_j_diff = b_lo_k - disc_j * b_lo[j] + cum_drift_diff_j;
+            /* add values */
+            g1_k += dt_sqrt_2_pi / sqrt_cum_sig2_diff_j *
+                    (g1[j] * exp(-0.5 * b_up_k_up_j_diff * b_up_k_up_j_diff / 
+                                 cum_sig2_diff_j) *
+                     (b_up_deriv_k - 
+                      sig2_k * b_up_k_up_j_diff / cum_sig2_diff_j) +
+                     g2[j] * exp(-0.5 * b_up_k_lo_j_diff * b_up_k_lo_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_up_deriv_k - 
+                      sig2_k * b_up_k_lo_j_diff / cum_sig2_diff_j));
+            g2_k -= dt_sqrt_2_pi / sqrt_cum_sig2_diff_j *
+                    (g1[j] * exp(-0.5 * b_lo_k_up_j_diff * b_lo_k_up_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_lo_deriv_k -
+                      sig2_k * b_lo_k_up_j_diff / cum_sig2_diff_j) +
+                     g2[j] * exp(-0.5 * b_lo_k_lo_j_diff * b_lo_k_lo_j_diff /
+                                 cum_sig2_diff_j) *
+                     (b_lo_deriv_k -
+                      sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
+        }
+        /* avoid negative densities that could appear due to numerical instab. */
+        g1[k] = std::max(g1_k, 0.0);
+        g2[k] = std::max(g2_k, 0.0);
+    }
+}
 
 
 /** ddm_fpt_full - compute first-passage time distribution
@@ -43,97 +548,24 @@ int ddm_fpt_full(double mu[], double sig2[], double b_lo[], double b_up[],
                  double b_lo_deriv[], double b_up_deriv[],
                  double delta_t, int k_max, double g1[], double g2[])
 {
-    double curr_cum_mu, curr_cum_sig2, sqrt_2_pi, delta_t_sqrt_2_pi;
-    double *cum_mu, *cum_sig2;
-    int j, k;
-    
     assert(mu != NULL && sig2 != NULL && sig2 != NULL & b_lo != NULL &&
            b_up != NULL && b_lo_deriv != NULL && b_up_deriv != NULL &&
            delta_t > 0 && k_max > 0 && g1 != NULL && g2 != NULL);
     
-    /* allocate array memory */
-    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
-    cum_sig2 = static_cast<double*>(malloc(k_max * sizeof(double)));
-    if (cum_mu == NULL || cum_sig2 == NULL) {
-        free(cum_mu);
-        free(cum_sig2);
-        return -1;
-    }
-    
-    /* precompute some constants */
-    sqrt_2_pi = 1 / sqrt(2 * PI);
-    delta_t_sqrt_2_pi = delta_t * sqrt_2_pi;
-    
-    /* cumulative mu and sig2 */
-    curr_cum_mu = delta_t * mu[0];
-    cum_mu[0] = curr_cum_mu;
-    curr_cum_sig2 = delta_t * sig2[0];
-    cum_sig2[0] = curr_cum_sig2;
-    for (j = 1; j < k_max; ++j) {
-        curr_cum_mu += delta_t * mu[j];
-        cum_mu[j] = curr_cum_mu;
-        curr_cum_sig2 += delta_t * sig2[j];
-        cum_sig2[j] = curr_cum_sig2;
-    }
-    
-    /* fill up g1 and g2 recursively */
-    for (k = 0; k < k_max; ++k) {
-        /* speed increase by reducing array access */
-        double sig2_k = sig2[k];
-        double b_up_k = b_up[k];
-        double b_lo_k = b_lo[k];
-        double cum_mu_k = cum_mu[k];
-        double cum_sig2_k = cum_sig2[k];
-        double sqrt_cum_sig2_k = sqrt(cum_sig2_k);
-        double b_up_deriv_k = b_up_deriv[k] - mu[k];
-        double b_lo_deriv_k = b_lo_deriv[k] - mu[k];
-        
-        /* initial values */
-        double g1_k = -sqrt_2_pi / sqrt_cum_sig2_k * 
-                      exp(-0.5 * (b_up_k - cum_mu_k) * (b_up_k - cum_mu_k) / 
-                          cum_sig2_k) *
-                      (b_up_deriv_k - sig2_k * (b_up_k - cum_mu_k) / cum_sig2_k);
-        double g2_k = sqrt_2_pi / sqrt_cum_sig2_k *
-                      exp(-0.5 * (b_lo_k - cum_mu_k) * (b_lo_k - cum_mu_k) /
-                          cum_sig2_k) *
-                      (b_lo_deriv_k - sig2_k * (b_lo_k - cum_mu_k) / cum_sig2_k);
-        /* relation to previous values */
-        for (j = 0; j < k; ++j) {
-            /* reducing array access + pre-compute values */
-            double cum_sig2_diff_j = cum_sig2_k - cum_sig2[j];
-            double sqrt_cum_sig2_diff_j = sqrt(cum_sig2_diff_j);
-            double cum_mu_diff_j = cum_mu[j] - cum_mu_k;
-            double b_up_k_up_j_diff = b_up_k - b_up[j] + cum_mu_diff_j;
-            double b_up_k_lo_j_diff = b_up_k - b_lo[j] + cum_mu_diff_j;
-            double b_lo_k_up_j_diff = b_lo_k - b_up[j] + cum_mu_diff_j;
-            double b_lo_k_lo_j_diff = b_lo_k - b_lo[j] + cum_mu_diff_j;
-            /* add values */
-            g1_k += delta_t_sqrt_2_pi / sqrt_cum_sig2_diff_j *
-                    (g1[j] * exp(-0.5 * b_up_k_up_j_diff * b_up_k_up_j_diff / 
-                                 cum_sig2_diff_j) *
-                     (b_up_deriv_k - 
-                      sig2_k * b_up_k_up_j_diff / cum_sig2_diff_j) +
-                     g2[j] * exp(-0.5 * b_up_k_lo_j_diff * b_up_k_lo_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_up_deriv_k - 
-                      sig2_k * b_up_k_lo_j_diff / cum_sig2_diff_j));
-            g2_k -= delta_t_sqrt_2_pi / sqrt_cum_sig2_diff_j *
-                    (g1[j] * exp(-0.5 * b_lo_k_up_j_diff * b_lo_k_up_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_lo_deriv_k -
-                      sig2_k * b_lo_k_up_j_diff / cum_sig2_diff_j) +
-                     g2[j] * exp(-0.5 * b_lo_k_lo_j_diff * b_lo_k_lo_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_lo_deriv_k -
-                      sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
-        }
-        /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = std::max(g1_k, 0.0);
-        g2[k] = std::max(g2_k, 0.0);
-    }
-    
-    free(cum_mu);
-    free(cum_sig2);
+    ExtArray g1a(ExtArray::shared_noowner(g1), k_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), k_max);
+
+    DMBase* dm = DMBase::create(
+            ExtArray(ExtArray::shared_noowner(mu), k_max),
+            ExtArray(ExtArray::shared_noowner(sig2), k_max),
+            ExtArray(ExtArray::shared_noowner(b_lo), k_max),
+            ExtArray(ExtArray::shared_noowner(b_up), k_max),
+            ExtArray(ExtArray::shared_noowner(b_lo_deriv), k_max),
+            ExtArray(ExtArray::shared_noowner(b_up_deriv), k_max),
+            delta_t);
+    dm->pdfseq(k_max, g1a, g2a);
+    delete dm;
+
     return 0;
 }
 
@@ -163,124 +595,25 @@ int ddm_fpt_full_leak(double mu[], double sig2[],
                       double inv_leak, double delta_t, int k_max,
                       double g1[], double g2[])
 {
-    double curr_cum_mu, curr_cum_sig2, curr_disc;
-    double sqrt_2_pi, delta_t_sqrt_2_pi, exp_leak, exp2_leak;
-    double *cum_mu, *cum_sig2, *disc, *disc2;
-    int j, k;
-    
     assert(mu != NULL && sig2 != NULL && sig2 != NULL & b_lo != NULL &&
            b_up != NULL && b_lo_deriv != NULL && b_up_deriv != NULL &&
            inv_leak >= 0 &&  delta_t > 0 && k_max > 0 &&
            g1 != NULL && g2 != NULL);
-    
-    /* allocate array memory */
-    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
-    cum_sig2 = static_cast<double*>(malloc(k_max * sizeof(double)));
-    disc = static_cast<double*>(malloc(k_max * sizeof(double)));
-    disc2 = static_cast<double*>(malloc(k_max * sizeof(double)));
-    if (cum_mu == NULL || cum_sig2 == NULL) {
-        free(cum_mu);
-        free(cum_sig2);
-        free(disc);
-        free(disc2);
-        return -1;
-    }
-    
-    /* precompute some constants */
-    sqrt_2_pi = 1 / sqrt(2 * PI);
-    delta_t_sqrt_2_pi = delta_t * sqrt_2_pi;
-    exp_leak = exp(- delta_t * inv_leak);
-    exp2_leak = exp(- 2 * delta_t * inv_leak);
-    
-    /* cumulative mu and sig2, and discount (leak) */
-    curr_cum_mu = delta_t * mu[0];
-    cum_mu[0] = curr_cum_mu;
-    curr_cum_sig2 = delta_t * sig2[0];
-    cum_sig2[0] = curr_cum_sig2;
-    curr_disc = exp_leak;
-    disc[0] = curr_disc;
-    for (j = 1; j < k_max; ++j) {
-        curr_cum_mu = exp_leak * curr_cum_mu + delta_t * mu[j];
-        cum_mu[j] = curr_cum_mu;
-        curr_cum_sig2 = exp2_leak * curr_cum_sig2 + delta_t * sig2[j];
-        cum_sig2[j] = curr_cum_sig2;
-        curr_disc *= exp_leak;
-        disc[j] = curr_disc;
-    }
-    /* double discount (leak),
-     * note that  disc[k - j - 1] = exp(- inv_leak delta_t (k - j))
-     *           disc2[k - j - 1] = exp(- 2 inv_leak delta_t (k - j))
-     * such that half of disc can be used to compute disc2 */
-    k = (int) floor(((double) (k_max - 1)) / 2);
-    for (j = 0; j <= k; ++j)
-        disc2[j] = disc[2 * j + 1];
-    curr_disc = disc2[k];
-    for (j = k + 1; j < k_max; ++j) {
-        curr_disc *= exp2_leak;
-        disc2[j] = curr_disc;
-    }
-    
-    /* fill up g1 and g2 recursively */
-    for (k = 0; k < k_max; ++k) {
-        /* speed increase by reducing array access */
-        double sig2_k = sig2[k];
-        double b_up_k = b_up[k];
-        double b_lo_k = b_lo[k];
-        double cum_mu_k = cum_mu[k];
-        double cum_sig2_k = cum_sig2[k];
-        double sqrt_cum_sig2_k = sqrt(cum_sig2_k);
-        double b_up_deriv_k = b_up_deriv[k] + inv_leak * b_up_k - mu[k];
-        double b_lo_deriv_k = b_lo_deriv[k] + inv_leak * b_lo_k - mu[k];
-        
-        /* initial values */
-        double g1_k = -sqrt_2_pi / sqrt_cum_sig2_k * 
-                      exp(-0.5 * (b_up_k - cum_mu_k) * (b_up_k - cum_mu_k) / 
-                          cum_sig2_k) *
-                      (b_up_deriv_k - sig2_k * (b_up_k - cum_mu_k) / cum_sig2_k);
-        double g2_k = sqrt_2_pi / sqrt_cum_sig2_k *
-                      exp(-0.5 * (b_lo_k - cum_mu_k) * (b_lo_k - cum_mu_k) /
-                          cum_sig2_k) *
-                      (b_lo_deriv_k - sig2_k * (b_lo_k - cum_mu_k) / cum_sig2_k);
-        /* relation to previous values */
-        for (j = 0; j < k; ++j) {
-            /* reducing array access + pre-compute values */
-            double disc_j = disc[k - j - 1];
-            double cum_sig2_diff_j = cum_sig2_k - disc2[k - j - 1] * cum_sig2[j];
-            double sqrt_cum_sig2_diff_j = sqrt(cum_sig2_diff_j);
-            double cum_mu_diff_j = disc_j * cum_mu[j] - cum_mu_k;
-            double b_up_k_up_j_diff = b_up_k - disc_j * b_up[j] + cum_mu_diff_j;
-            double b_up_k_lo_j_diff = b_up_k - disc_j * b_lo[j] + cum_mu_diff_j;
-            double b_lo_k_up_j_diff = b_lo_k - disc_j * b_up[j] + cum_mu_diff_j;
-            double b_lo_k_lo_j_diff = b_lo_k - disc_j * b_lo[j] + cum_mu_diff_j;
-            /* add values */
-            g1_k += delta_t_sqrt_2_pi / sqrt_cum_sig2_diff_j *
-                    (g1[j] * exp(-0.5 * b_up_k_up_j_diff * b_up_k_up_j_diff / 
-                                 cum_sig2_diff_j) *
-                     (b_up_deriv_k - 
-                      sig2_k * b_up_k_up_j_diff / cum_sig2_diff_j) +
-                     g2[j] * exp(-0.5 * b_up_k_lo_j_diff * b_up_k_lo_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_up_deriv_k - 
-                      sig2_k * b_up_k_lo_j_diff / cum_sig2_diff_j));
-            g2_k -= delta_t_sqrt_2_pi / sqrt_cum_sig2_diff_j *
-                    (g1[j] * exp(-0.5 * b_lo_k_up_j_diff * b_lo_k_up_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_lo_deriv_k -
-                      sig2_k * b_lo_k_up_j_diff / cum_sig2_diff_j) +
-                     g2[j] * exp(-0.5 * b_lo_k_lo_j_diff * b_lo_k_lo_j_diff /
-                                 cum_sig2_diff_j) *
-                     (b_lo_deriv_k -
-                      sig2_k * b_lo_k_lo_j_diff / cum_sig2_diff_j));
-        }
-        /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = std::max(g1_k, 0.0);
-        g2[k] = std::max(g2_k, 0.0);
-    }
-    
-    free(cum_mu);
-    free(cum_sig2);
-    free(disc);
-    free(disc2);
+
+    ExtArray g1a(ExtArray::shared_noowner(g1), k_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), k_max);
+
+    DMBase* dm = DMBase::create(
+            ExtArray(ExtArray::shared_noowner(mu), k_max),
+            ExtArray(ExtArray::shared_noowner(sig2), k_max),
+            ExtArray(ExtArray::shared_noowner(b_lo), k_max),
+            ExtArray(ExtArray::shared_noowner(b_up), k_max),
+            ExtArray(ExtArray::shared_noowner(b_lo_deriv), k_max),
+            ExtArray(ExtArray::shared_noowner(b_up_deriv), k_max),
+            delta_t, inv_leak);
+    dm->pdfseq(k_max, g1a, g2a);
+    delete dm;
+
     return 0;
 }
 
@@ -299,96 +632,19 @@ int ddm_fpt_full_leak(double mu[], double sig2[],
 int ddm_fpt(double mu[], double bound[], double delta_t, int k_max,
             double g1[], double g2[])
 {
-    double delta_t_2, pi_delta_t_2, curr_cum_mu;
-    double *cum_mu, *bound_deriv, *norm_sqrt_t, *norm_t;
-    int j, k;
-
     assert(mu != NULL && bound != NULL && delta_t > 0 && k_max > 0 &&
            g1 != NULL && g2 != NULL);
     
-    /* allocate array memory */
-    cum_mu = static_cast<double*>(malloc(k_max * sizeof(double)));
-    bound_deriv = static_cast<double*>(malloc(k_max * sizeof(double)));
-    norm_sqrt_t = static_cast<double*>(malloc(k_max * sizeof(double)));
-    norm_t = static_cast<double*>(malloc(k_max * sizeof(double)));
-    if (cum_mu == NULL || bound_deriv == NULL || 
-        norm_sqrt_t == NULL || norm_t == NULL) {
-        free(cum_mu);
-        free(bound_deriv);
-        free(norm_sqrt_t);
-        free(norm_t);
-        return -1;
-    }
+    ExtArray g1a(ExtArray::shared_noowner(g1), k_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), k_max);
 
-    /* precompute some constants */
-    delta_t_2 = 2.0 * delta_t;
-    pi_delta_t_2 = PI * delta_t_2;
-    
-    /* cumulative mu, and derivative of bound */
-    curr_cum_mu = delta_t * mu[0];
-    cum_mu[0] = curr_cum_mu;
-    for (j = 1; j < k_max; ++j) {
-        curr_cum_mu += delta_t * mu[j];
-        cum_mu[j] = curr_cum_mu;
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / delta_t;
-    }
-    bound_deriv[k_max - 1] = bound_deriv[k_max - 2];
+    DMBase* dm = DMBase::create(
+        ExtArray(ExtArray::shared_noowner(mu), k_max),
+        ExtArray(ExtArray::shared_noowner(bound), k_max),
+        delta_t);
+    dm->pdfseq(k_max, g1a, g2a);
+    delete dm;
 
-    /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * delta_t * (i + 1)) 
-       norm_t[i] = 1 / (delta_t * (i + 1)) */
-    for (j = 0; j < k_max; ++j) {
-        norm_sqrt_t[j] = 1.0 / sqrt(pi_delta_t_2 * (j + 1.0));
-        norm_t[j] = 1.0 / (delta_t * (j + 1.0));
-    }
-
-    /* fill up g1 and g2 recursively */
-    for (k = 0; k < k_max; ++k) {
-        /* speed increase by reducing array access */
-        double bound_k = bound[k];
-        double bound_deriv_k1 = bound_deriv[k] - mu[k];
-        double bound_deriv_k2 = -bound_deriv[k] - mu[k];
-        double cum_mu_k = cum_mu[k];
-        double norm_t_j = norm_t[k];
-        double norm_sqrt_t_j = norm_sqrt_t[k];
-        /* initial values */
-        double g1_k = -norm_sqrt_t_j
-                      * exp(- 0.5 * (bound_k - cum_mu_k) * (bound_k - cum_mu_k) * norm_t_j)
-                      * (bound_deriv_k1 - (bound_k - cum_mu_k) * norm_t_j);
-        double g2_k = norm_sqrt_t_j
-                      * exp(- 0.5 * (-bound_k - cum_mu_k) * (-bound_k - cum_mu_k) * norm_t_j)
-                      * (bound_deriv_k2 - (-bound_k - cum_mu_k) * norm_t_j);
-        /* relation to previous values */
-        for (j = 0; j < k; ++j) {
-            /* reducing array access + pre-compute values */
-            double bound_j = bound[j];
-            double cum_mu_k_j = cum_mu_k - cum_mu[j];
-            double diff1 = bound_k - bound_j - cum_mu_k_j;
-            double diff2 = bound_k + bound_j - cum_mu_k_j;
-            norm_t_j = norm_t[k - j - 1];
-            norm_sqrt_t_j = norm_sqrt_t[k - j - 1];
-            /* add values */
-            g1_k += delta_t * norm_sqrt_t_j
-                    * (g1[j] * exp(- 0.5 * diff1 * diff1 * norm_t_j)
-                       * (bound_deriv_k1 - diff1 * norm_t_j)
-                       + g2[j] * exp(- 0.5 * diff2 * diff2 * norm_t_j)
-                       * (bound_deriv_k1 - diff2 * norm_t_j));
-            diff1 = -bound_k - bound_j - cum_mu_k_j;
-            diff2 = -bound_k + bound_j - cum_mu_k_j;
-            g2_k -= delta_t * norm_sqrt_t_j
-                    * (g1[j] * exp(- 0.5 * diff1 * diff1 * norm_t_j)
-                       * (bound_deriv_k2 - diff1 * norm_t_j)
-                       + g2[j] * exp(- 0.5 * diff2 * diff2 * norm_t_j)
-                       * (bound_deriv_k2 - diff2 * norm_t_j));
-        }
-        /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = std::max(g1_k, 0.0);
-        g2[k] = std::max(g2_k, 0.0);
-    }
-
-    free(cum_mu);
-    free(bound_deriv);
-    free(norm_sqrt_t);
-    free(norm_t);
     return 0;
 }
 
@@ -407,231 +663,20 @@ int ddm_fpt(double mu[], double bound[], double delta_t, int k_max,
 int ddm_fpt_const_mu(double mu, double bound[], double delta_t, int k_max,
                      double g1[], double g2[])
 {
-    double delta_t_2, pi_delta_t_2, mu_delta_t, mu_2;
-    double *bound_deriv, *norm_sqrt_t, *norm_t;
-    int j, k;
-    
     assert(mu > 0 && bound != NULL && delta_t > 0 && k_max > 0 &&
            g1 != NULL && g2 != NULL);
-    
-    /* allocate array memory */
-    bound_deriv = static_cast<double*>(malloc(k_max * sizeof(double)));
-    norm_sqrt_t = static_cast<double*>(malloc(k_max * sizeof(double)));
-    norm_t = static_cast<double*>(malloc(k_max * sizeof(double)));
-    if (bound_deriv == NULL || norm_sqrt_t == NULL || norm_t == NULL) {
-        free(bound_deriv);
-        free(norm_sqrt_t);
-        free(norm_t);
-        return -1;
-    }
 
-    /* precompute some constants */
-    delta_t_2 = 2.0 * delta_t;
-    pi_delta_t_2 = PI * delta_t_2;
-    mu_delta_t = delta_t * mu;
-    mu_2 = -2 * mu;
+    ExtArray g1a(ExtArray::shared_noowner(g1), k_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), k_max);
 
-    /* derivative of bound */
-    for (j = 1; j < k_max; ++j) {
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / delta_t;
-    }
-    bound_deriv[k_max - 1] = bound_deriv[k_max - 2];
+    DMBase* dm = DMBase::create(
+        ExtArray::const_array(mu),
+        ExtArray(ExtArray::shared_noowner(bound), k_max),
+        delta_t);
+    dm->pdfseq(k_max, g1a, g2a);
+    delete dm;
 
-    /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * delta_t * (i + 1)) 
-       norm_t[i] = 1 / (delta_t * (i + 1)) */
-    for (j = 0; j < k_max; ++j) {
-        norm_sqrt_t[j] = 1.0 / sqrt(pi_delta_t_2 * (j + 1.0));
-        norm_t[j] = 1.0 / (delta_t * (j + 1.0));
-    }
-
-    /* fill g1 recursively, g2 is based on g1 */
-    for (k = 0; k < k_max; ++k) {
-        /* speed increase by reducing array access */
-        double bound_k = bound[k];
-        double bound_deriv_k1 = bound_deriv[k] - mu;
-        double bound_deriv_k2 = -bound_deriv[k] - mu;
-        double cum_mu_k = (k + 1) * mu_delta_t;
-        double norm_t_j = norm_t[k];
-        double norm_sqrt_t_j = norm_sqrt_t[k];
-        /* initial values */
-        double g1_k = -norm_sqrt_t_j
-                      * exp(- 0.5 * (bound_k - cum_mu_k) * (bound_k - cum_mu_k) * norm_t_j)
-                      * (bound_deriv_k1 - (bound_k - cum_mu_k) * norm_t_j);
-        /* relation to previous values */
-        for (j = 0; j < k; ++j) {
-            /* reducing array access + pre-compute values */
-            double bound_j = bound[j];
-            double cum_mu_k_j = (k - j) * mu_delta_t;
-            double diff1 = bound_k - bound_j - cum_mu_k_j;
-            double diff2 = bound_k + bound_j - cum_mu_k_j;
-            norm_t_j = norm_t[k - j - 1];
-            norm_sqrt_t_j = norm_sqrt_t[k - j - 1];
-            /* add values */
-            g1_k += delta_t * norm_sqrt_t_j
-                    * (g1[j] * exp(- 0.5 * diff1 * diff1 * norm_t_j)
-                       * (bound_deriv_k1 - diff1 * norm_t_j)
-                       + g2[j] * exp(- 0.5 * diff2 * diff2 * norm_t_j)
-                       * (bound_deriv_k2 - diff2 * norm_t_j));
-        }
-        /* avoid negative densities that could appear due to numerical instab. */
-        g1[k] = std::max(g1_k, 0.0);
-        g2[k] = std::max(g1_k * exp(mu_2 * bound_k), 0.0);
-    }
-    
-    free(bound_deriv);
-    free(norm_sqrt_t);
-    free(norm_t);
     return 0;
-}
-
-
-/** useshortseries - choose between two series expansions
- * from Navarro & Fuss (2009), Eq. (13)
- **/
-int useshorttseries(double t, double tol)
-{
-    return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
-            sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0;
-}
-
-
-/** fpt_asymshort - series expansion for fpt for short t
- * Implementing Navarro & Fuss (2009), Eq. (6) 
- **/
-double fpt_asymshortt(double t, double w, double tol)
-{
-    const double b = pow(t, -1.5) / sqrt(TWOPI);
-    double f;
-    int k;
-    tol *= b;
-    t *= 2;
-    k = 1;
-    f = w * exp(-w * w / t);
-    while (1) {
-        double c, incr;
-        c = w + 2 * k;
-        incr = c * exp(-c * c / t);
-        f += incr;
-        if (fabs(incr) < tol)
-            return f * b;
-        c = w - 2 * k;
-        incr = c * exp(-c * c / t);
-        f += incr;
-        if (fabs(incr) < tol)
-            return f * b;
-        k += 1;
-    }
-}
-
-
-/** fpt_asymlongt - series expansion for fpt for long t
- * implementing Navarro & Fuss (2009), Eq. (5)
- **/
-double fpt_asymlongt(double t, double w, double tol)
-{
-    double f;
-    int k;
-    tol *= PI;
-    f = 0.0;
-    k = 1;
-    while (1) {
-        const double kpi = k * PI;
-        double incr;
-        incr = k * exp(- (kpi * kpi) * t / 2) * sin(kpi * w);
-        f += incr;
-        if (fabs(incr) < tol)
-            return f * PI;
-        k += 1;
-    }
-}
-
-
-/** fpt_asymfastseries - fpt lower density, mu=0, bounds {0,1}, starting at w
- * The function chooses between the faster of two series expansions, depending
- * on the given t. It returns the lower bound density at t.
- **/
-double fpt_asymfastseries(double t, double w, double tol)
-{
-    if (t == 0.0)
-      return 0.0;
-    return useshorttseries(t, tol) ? fpt_asymshortt(t, w, tol) :
-                                     fpt_asymlongt(t, w, tol);
-}
-
-
-/** fpt_asymlo - fpt for upper bound, for const drift/bounds
- * The required arguments are
- * c1 = (bu - bl)^2
- * c2 = mu^2 / 2
- * c3 = mu * bu
- * w = -bl / (bu - bl)
- * where mu = drift, bu and bl are upper and lower bounds.
- **/
-double fpt_asymup(double t, double c1, double c2, double c3, double w)
-{
-    return exp(c3 - c2 * t) / c1 * 
-        fpt_asymfastseries(t / c1, 1 - w, SERIES_ACC);
-}
-
-
-/** fpt_asymlo - fpt for lower bound, for const drift/bounds
- * The required arguments are as for fpt_asymup, except c4, which is
- * c4 = mu * bl
- **/
-double fpt_asymlo(double t, double c1, double c2, double c4, double w)
-{
-    return exp(c4 - c2 * t) / c1 * fpt_asymfastseries(t / c1, w, SERIES_ACC);
-}
-
-
-/** fpt_symseries - series expansion for fpt lower density, symmetric bounds **/
-double fpt_symseries(double t, double a, double b, double tol)
-{
-    double f;
-    int twok;
-    tol *= b;
-    f = exp(-a);
-    twok = 3;
-    while (1) {
-        double incr;
-        incr = twok * exp(- (twok * twok) * a);
-        f -= incr;
-        if (incr < tol)
-            return f * b;
-        twok += 2;
-        incr = twok * exp(- (twok * twok) * a);
-        f += incr;
-        if (incr < tol)
-            return f * b;
-        twok += 2;
-    }
-}
-
-
-/** fpt_symfastseries - fpt lower density, mu=0, bounds {0,1}, starting at 0.5
- * The function chooses between the faster of two series expansions, depending
- * on the given t. It returns the lower bound density at t.
- **/
-double fpt_symfastseries(double t, double tol)
-{
-    if (t == 0.0)
-        return 0.0;
-    return useshorttseries(t, tol) ?
-           fpt_symseries(t, 1 / (8 * t), 1 / sqrt(8 * PI * pow(t, 3)), tol) :
-           fpt_symseries(t, t * PISQR / 2, PI, tol);
-}
-
-
-/** fpt_symup - fpt density at upper boundary, symmetric bounds
- * The required arguments are
- * c1 = 4 * bound^2
- * c2 = mu^2 / 2
- * c3 = mu * bound
- * The density at the lower bound is exp(-2 mu bound) times the upper density
- **/
-double fpt_symup(double t, double c1, double c2, double c3)
-{
-    return exp(c3 - c2 * t) / c1 * fpt_symfastseries(t / c1, SERIES_ACC);
 }
 
 
@@ -647,23 +692,16 @@ double fpt_symup(double t, double c1, double c2, double c3)
 void ddm_fpt_const(double mu, double bound, double delta_t, int k_max,
                    double g1[], double g2[])
 {
-    const double c1 = 4 * (bound * bound);
-    const double c2 = (mu * mu) / 2;
-    const double c3 = mu * bound;
-    const double c4 = exp(-2 * c3);
-    double t;
-    int i;
-
     assert(mu > 0 && bound > 0 && delta_t > 0 && k_max > 0 &&
         g1 != NULL && g2 != NULL);
 
-    t = delta_t;
-    for (i = 0; i < k_max; ++i) {
-        const double g = fpt_symup(t, c1, c2, c3);
-        (*g1++) = std::max(g, 0.0);
-        (*g2++) = std::max(c4 * g, 0.0);
-        t += delta_t;
-    }
+    ExtArray g1a(ExtArray::shared_noowner(g1), k_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), k_max);
+
+    DMBase* dm = DMBase::create(ExtArray::const_array(mu),
+        ExtArray::const_array(bound), delta_t);
+    dm->pdfseq(k_max, g1a, g2a);
+    delete dm;
 }
 
 
@@ -682,78 +720,19 @@ void ddm_fpt_const(double mu, double bound, double delta_t, int k_max,
 int ddm_fpt_w(double mu[], double bound[], double k, double delta_t,
               int n_max, double g1[], double g2[])
 {
-    double k_2, cum_a2;
-    double *a2, *A, *bound_deriv;
-    int j, n;
-    
     assert(mu != NULL && bound != NULL && delta_t > 0.0 &&
            n_max > 0 &&  g1 != NULL && g2 != NULL);
     
-    /* allocate array memory */
-    a2 = static_cast<double*>(malloc(n_max * sizeof(double)));
-    A = static_cast<double*>(malloc(n_max * sizeof(double)));
-    bound_deriv = static_cast<double*>(malloc(n_max * sizeof(double)));
-    if (a2 == NULL || A == NULL || bound_deriv == NULL) {
-        free(a2);
-        free(A);
-        free(bound_deriv);
-        return -1;
-    }
+    ExtArray g1a(ExtArray::shared_noowner(g1), n_max);
+    ExtArray g2a(ExtArray::shared_noowner(g2), n_max);
 
-    /* pre-compute value */
-    k_2 = -2 * k;
+    DMBase* dm = DMBase::createw(
+        ExtArray(ExtArray::shared_noowner(mu), n_max),
+        ExtArray(ExtArray::shared_noowner(bound), n_max),
+        k, delta_t);
+    dm->pdfseq(n_max, g1a, g2a);
+    delete dm;
 
-    /* a2(t) = mu(t)^2, A_t(t) = \int^t a2(s) ds, and derivative of bound */
-    cum_a2 = delta_t * (a2[0] = mu[0] * mu[0]);
-    A[0] = cum_a2;
-    for (j = 1; j < n_max; ++j) {
-        cum_a2 += delta_t * (a2[j] = mu[j] * mu[j]);
-        A[j] = cum_a2;
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / delta_t;
-    }
-    bound_deriv[n_max - 1] = bound_deriv[n_max - 2];
-
-    /* fill up g1 and g2 recursively */
-    for (n = 0; n < n_max; ++n) {
-        /* reduce array access */
-        double bound_n = bound[n];
-        double a2_n = a2[n];
-        double A_n = A[n];
-        double bound_deriv_n = bound_deriv[n];
-
-        /* initial values */
-        double diff1 = bound_n - k * A_n;
-        double diff2 = -bound_n - k * A_n;
-        double sqrt_A_n = sqrt(TWOPI * A_n);
-        double tmp = bound_deriv_n - bound_n / A_n * a2_n;
-        double g1_n = - exp(-0.5 * diff1 * diff1 / A_n) / sqrt_A_n * tmp;
-
-        /* relation to previous values */
-        for (j = 0; j < n; ++j) {
-            /* reduce array access and pre-compute values */
-            double diff1_A, diff2_A;
-            double bound_j = bound[j];
-            double A_diff = A_n - A[j];
-            double sqrt_A_diff = sqrt(TWOPI * A_diff);
-            diff1 = bound_n - bound_j;
-            diff2 = bound_n + bound_j;
-
-            diff1_A = diff1 - k * A_diff;
-            diff2_A = diff2 - k * A_diff;
-            g1_n += delta_t / sqrt_A_diff * (
-                        g1[j] * exp(-0.5 * diff1_A * diff1_A / A_diff) 
-                        * (bound_deriv_n - a2_n * diff1 / A_diff)
-                      + g2[j] * exp(-0.5 * diff2_A * diff2_A / A_diff)
-                        * (bound_deriv_n - a2_n * diff2 / A_diff));
-        }
-        /* avoid negative densities that could appear due to numerical instab. */
-        g1[n] = std::max(g1_n, 0.0);
-        g2[n] = std::max(g1_n * exp(k_2 * bound_n), 0.0);
-    }
-
-    free(a2);
-    free(A);
-    free(bound_deriv);
     return 0;
 }
 
@@ -769,9 +748,8 @@ int ddm_fpt_w(double mu[], double bound[], double k, double delta_t,
 void mnorm(double g1[], double g2[], int n, double delta_t)
 {
     /* remove negative elements and compute sum */
-    double g1_sum = 0.0, g2_sum = 0.0, p;
-    int i;
-    for (i = 0; i < n; ++i) {
+    double g1_sum = 0.0, g2_sum = 0.0;
+    for (int i = 0; i < n; ++i) {
         if (g1[i] < 0) g1[i] = 0;
         else g1_sum += g1[i];
         if (g2[i] < 0) g2[i] = 0;
@@ -779,7 +757,7 @@ void mnorm(double g1[], double g2[], int n, double delta_t)
     }
     
     /* adjust last elements accoring to ratio */
-    p = g1_sum / (g1_sum + g2_sum);
+    double p = g1_sum / (g1_sum + g2_sum);
     g1[n - 1] += p / delta_t - g1_sum;
     g2[n - 1] += (1 - p) / delta_t - g2_sum;
 }
@@ -795,15 +773,12 @@ void mnorm(double g1[], double g2[], int n, double delta_t)
  **/
 double* extend_vector(double v[], int v_size, int new_size, double fill_el)
 {
-    double *new_v;
-    int i;
-    
-    new_v = static_cast<double*>(malloc(new_size * sizeof(double)));
+    double *new_v = static_cast<double*>(malloc(new_size * sizeof(double)));
     if (new_v == NULL)
         return NULL;
     
     memcpy(new_v, v, sizeof(double) * std::min(v_size, new_size));
-    for (i = v_size; i < new_size; ++i)
+    for (int i = v_size; i < new_size; ++i)
         new_v[i] = fill_el;
     
     return new_v;
