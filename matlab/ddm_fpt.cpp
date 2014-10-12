@@ -53,8 +53,6 @@
 
 #include "../ddm_fpt_lib/ddm_fpt_lib.h"
 
-#include <cmath>
-#include <cstdlib>
 #include <string>
 #include <cassert>
 #include <algorithm>
@@ -66,9 +64,6 @@
 /** the gateway function */
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
-    int mu_size, bound_size, cur_argin, k_max;
-    int weighted_ddm = 0, normalise_mass = 0;
-    double *mu, *bound, delta_t, t_max, k = 0.0;
     /* [g1, g2] = ddm_fpt(mu, bound, delta_t, t_max) or
        [g1, g2] = ddm_fpt(a, k, bound, delta_t, t_max) */
 
@@ -95,12 +90,12 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     if (!MEX_ARGIN_IS_REAL_DOUBLE(3))
         mexErrMsgIdAndTxt("ddm_fpt:WrongInput",
                           "Forth input argument expected to be a double");
-    mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
-    mu = mxGetPr(prhs[0]);
-    bound_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
-    bound = mxGetPr(prhs[1]);
-    delta_t = mxGetScalar(prhs[2]);
-    t_max = mxGetScalar(prhs[3]);
+    int mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
+    int bound_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
+    ExtArray mu(ExtArray::shared_noowner(mxGetPr(prhs[0])), mu_size);
+    ExtArray bound(ExtArray::shared_noowner(mxGetPr(prhs[1])), bound_size);
+    double delta_t = mxGetScalar(prhs[2]);
+    double t_max = mxGetScalar(prhs[3]);
     if (delta_t <= 0.0)
         mexErrMsgIdAndTxt("ddm_fpt:WrongInput",
                           "delta_t needs to be larger than 0.0");
@@ -109,17 +104,20 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
                           "t_max needs to be at least as large as delta_t");
     
     /* Process possible 5th non-string argument */
-    cur_argin = 4;
+    bool weighted_ddm = false;
+    int cur_argin = 4;
+    double k = 0.0;
     if (nrhs > 4 && !mxIsChar(prhs[4])) {
         if (!MEX_ARGIN_IS_REAL_DOUBLE(4))
             mexErrMsgIdAndTxt("ddm_fpt:WrongInput",
                               "Fifth input argument expected to be a double");
         k = mxGetScalar(prhs[4]);
-        weighted_ddm = 1;
+        weighted_ddm = true;
         ++cur_argin;
     }
     
     /* Process string arguments */
+    bool normalise_mass = false;
     if (nrhs > cur_argin) {
         char str_arg[6];
         /* current only accept 'mnorm' string argument */
@@ -138,7 +136,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
             (strcmp(str_arg, "yes") != 0 && strcmp(str_arg, "no") != 0))
             mexErrMsgIdAndTxt("ddm_fpt:WrongInput",
                               "\"yes\" or \"no\" expected after \"mnorm\"");
-        normalise_mass = strcmp(str_arg, "yes") == 0;
+        normalise_mass = (strcmp(str_arg, "yes") == 0);
         
         /* no arguments allowed after that */
         if (nrhs > cur_argin + 2)
@@ -146,108 +144,21 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
                               "Too many input arguments");
     }
 
-    /* extend mu and bound by replicating last element, if necessary */
-    k_max = (int) ceil(t_max / delta_t);
-
     /* reserve space for output */
+    int k_max = (int) ceil(t_max / delta_t);
     plhs[0] = mxCreateDoubleMatrix(1, k_max, mxREAL);
     plhs[1] = mxCreateDoubleMatrix(1, k_max, mxREAL);
-    
+    ExtArray g1(ExtArray::shared_noowner(mxGetPr(plhs[0])), k_max);
+    ExtArray g2(ExtArray::shared_noowner(mxGetPr(plhs[1])), k_max);
+
     if (weighted_ddm) {
-        /* extend mu and bound by replicating last element */
-        double *mu_ext, *bound_ext, last_mu, last_bound;
-        int i, err;
-        
-        mu_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
-        bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
-        if (mu_ext == NULL || bound_ext ==  NULL) {
-            free(mu_ext);
-            free(bound_ext);
-            mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-        }
-
-        memcpy(mu_ext, mu, sizeof(double) * std::min(mu_size, k_max));
-        last_mu = mu[mu_size - 1];
-        for (i = mu_size; i < k_max; ++i)
-            mu_ext[i] = last_mu;
-
-        memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
-        last_bound = bound[bound_size - 1];
-        for (i = bound_size; i < k_max; ++i)
-            bound_ext[i] = last_bound;
-
-        /* compute the pdf's with weighted evidence */
-        err = ddm_fpt_w(mu_ext, bound_ext, k, delta_t, k_max, 
-                        mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-        
-        free(mu_ext);
-        free(bound_ext);
-        
-        if (err == -1)
-            mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-
-    } else if (mu_size == 1) {
-        if (bound_size == 1) {
-            /* constant bound and drift - can use simpler method */
-            ddm_fpt_const(mu[0], bound[0], delta_t, k_max,
-                          mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-        } else {
-            /* extend bound by replicating last element */
-            double *bound_ext, last_bound;
-            int i, err;
-            
-            bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
-            if (bound_ext == NULL)
-                mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-
-            memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
-            last_bound = bound[bound_size - 1];
-            for (i = bound_size; i < k_max; ++i)
-                bound_ext[i] = last_bound;
-            
-            /* constant drift - slightly more efficient */
-            err = ddm_fpt_const_mu(mu[0], bound_ext, delta_t, k_max,
-                                   mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-            
-            free(bound_ext);
-            
-            if (err == -1)
-                mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-            
-        }
+        DMBase* dm = DMBase::createw(mu, bound, k, delta_t);
+        dm->pdfseq(k_max, g1, g2);
+        delete dm;
     } else {
-        /* extend mu and bound by replicating last element */
-        double *mu_ext, *bound_ext, last_mu, last_bound;
-        int i, err;
-        
-        mu_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
-        bound_ext = static_cast<double*>(malloc(k_max * sizeof(double)));
-        if (mu_ext == NULL || bound_ext ==  NULL) {
-            free(mu_ext);
-            free(bound_ext);
-            mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-        }
-
-        memcpy(mu_ext, mu, sizeof(double) * std::min(mu_size, k_max));
-        last_mu = mu[mu_size - 1];
-        for (i = mu_size; i < k_max; ++i)
-            mu_ext[i] = last_mu;
-
-        memcpy(bound_ext, bound, sizeof(double) * std::min(bound_size, k_max));
-        last_bound = bound[bound_size - 1];
-        for (i = bound_size; i < k_max; ++i)
-            bound_ext[i] = last_bound;
-
-        /* compute the pdf's */
-        err = ddm_fpt(mu_ext, bound_ext, delta_t, k_max, 
-                      mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-        
-        free(mu_ext);
-        free(bound_ext);
-
-        if (err == -1)
-            mexErrMsgIdAndTxt("ddm_fpt:OutOfMemory", "Out of memory");
-        
+        DMBase* dm = DMBase::create(mu, bound, delta_t);
+        dm->pdfseq(k_max, g1, g2);
+        delete dm;
     }
     
     /* normalise mass, if requested */

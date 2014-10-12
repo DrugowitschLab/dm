@@ -50,11 +50,9 @@
 
 #include "../ddm_fpt_lib/ddm_fpt_lib.h"
 
-#include <cmath>
-#include <cstdlib>
 #include <string>
-#include <cassert>
 #include <algorithm>
+#include <limits>
 
 #define MEX_ARGIN_IS_REAL_DOUBLE(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) == 1)
 #define MEX_ARGIN_IS_REAL_VECTOR(arg_idx) (mxIsDouble(prhs[arg_idx]) && !mxIsComplex(prhs[arg_idx]) && ((mxGetN(prhs[arg_idx]) == 1 && mxGetM(prhs[arg_idx]) >= 1) || (mxGetN(prhs[arg_idx]) >= 1 && mxGetM(prhs[arg_idx]) == 1)))
@@ -63,11 +61,6 @@
 /** the gateway function */
 void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
 {
-    int mu_size, sig2_size, k_max, err, cur_argin, normalise_mass = 0;
-    int b_lo_size, b_up_size, b_lo_deriv_size, b_up_deriv_size, has_leak = 0;
-    double *mu, *sig2, *b_lo, *b_up, *b_lo_deriv, *b_up_deriv, *mu_ext;
-    double *sig2_ext, *b_lo_ext, *b_up_ext, *b_lo_deriv_ext, *b_up_deriv_ext;
-    double delta_t, t_max, inv_leak;
     /* [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
                                delta_t, t_max, [leak]) */
 
@@ -106,20 +99,20 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     if (!MEX_ARGIN_IS_REAL_DOUBLE(7))
         mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "Eight input argument expected to be a double");
-    mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
-    sig2_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
-    b_lo_size = std::max(mxGetN(prhs[2]), mxGetM(prhs[2]));
-    b_up_size = std::max(mxGetN(prhs[3]), mxGetM(prhs[3]));
-    b_lo_deriv_size = std::max(mxGetN(prhs[4]), mxGetM(prhs[4]));
-    b_up_deriv_size = std::max(mxGetN(prhs[5]), mxGetM(prhs[5]));
-    mu = mxGetPr(prhs[0]);
-    sig2 = mxGetPr(prhs[1]);
-    b_lo = mxGetPr(prhs[2]);
-    b_up = mxGetPr(prhs[3]);
-    b_lo_deriv = mxGetPr(prhs[4]);
-    b_up_deriv = mxGetPr(prhs[5]);
-    delta_t = mxGetScalar(prhs[6]);
-    t_max = mxGetScalar(prhs[7]);
+    int mu_size = std::max(mxGetN(prhs[0]), mxGetM(prhs[0]));
+    int sig2_size = std::max(mxGetN(prhs[1]), mxGetM(prhs[1]));
+    int b_lo_size = std::max(mxGetN(prhs[2]), mxGetM(prhs[2]));
+    int b_up_size = std::max(mxGetN(prhs[3]), mxGetM(prhs[3]));
+    int b_lo_deriv_size = std::max(mxGetN(prhs[4]), mxGetM(prhs[4]));
+    int b_up_deriv_size = std::max(mxGetN(prhs[5]), mxGetM(prhs[5]));
+    ExtArray mu(ExtArray::shared_noowner(mxGetPr(prhs[0])), mu_size);
+    ExtArray sig2(ExtArray::shared_noowner(mxGetPr(prhs[1])), sig2_size);
+    ExtArray b_lo(ExtArray::shared_noowner(mxGetPr(prhs[2])), b_lo_size);
+    ExtArray b_up(ExtArray::shared_noowner(mxGetPr(prhs[3])), b_up_size);
+    ExtArray b_lo_deriv(ExtArray::shared_noowner(mxGetPr(prhs[4])), 0.0, b_lo_deriv_size);
+    ExtArray b_up_deriv(ExtArray::shared_noowner(mxGetPr(prhs[5])), 0.0, b_up_deriv_size);
+    double delta_t = mxGetScalar(prhs[6]);
+    double t_max = mxGetScalar(prhs[7]);
     if (delta_t <= 0.0)
         mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                           "delta_t needs to be larger than 0.0");
@@ -128,7 +121,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
                           "t_max needs to be at least as large as delta_t");
 
     /* Process possible 9th non-string argument */
-    cur_argin = 8;
+    int cur_argin = 8;
+    bool has_leak = false;
+    double inv_leak = std::numeric_limits<double>::infinity();
     if (nrhs > cur_argin && !mxIsChar(prhs[cur_argin])) {
         if (!MEX_ARGIN_IS_REAL_DOUBLE(cur_argin))
             mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
@@ -137,11 +132,12 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         if (inv_leak < 0.0)
             mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "inv_leak needs to be non-negative");
-        has_leak = 1;
+        has_leak = true;
         ++cur_argin;
     }
         
     /* Process string arguments */
+    bool normalise_mass = false;
     if (nrhs > cur_argin) {
         char str_arg[6];
         /* current only accept 'mnorm' string argument */
@@ -160,7 +156,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
             (strcmp(str_arg, "yes") != 0 && strcmp(str_arg, "no") != 0))
             mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "\"yes\" or \"no\" expected after \"mnorm\"");
-        normalise_mass = strcmp(str_arg, "yes") == 0;
+        normalise_mass = (strcmp(str_arg, "yes") == 0);
         
         /* no arguments allowed after that */
         if (nrhs > cur_argin + 2)
@@ -168,55 +164,27 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
                               "Too many input arguments");
     }
 
-    /* extend mu and bound by replicating last element, if necessary */
-    k_max = (int) ceil(t_max / delta_t);
-
     /* reserve space for output */
-    plhs[0] = mxCreateDoubleMatrix(1, k_max, mxREAL);
-    plhs[1] = mxCreateDoubleMatrix(1, k_max, mxREAL);
-    
-    /* extend vectors by replicating last element */
-    mu_ext = extend_vector(mu, mu_size, k_max, mu[mu_size - 1]);
-    sig2_ext = extend_vector(sig2, sig2_size, k_max, sig2[sig2_size - 1]);
-    b_lo_ext = extend_vector(b_lo, b_lo_size, k_max, b_lo[b_lo_size - 1]);
-    b_up_ext = extend_vector(b_up, b_up_size, k_max, b_up[b_up_size - 1]);
-    b_lo_deriv_ext = extend_vector(b_lo_deriv, b_lo_deriv_size, k_max, 0.0);
-    b_up_deriv_ext = extend_vector(b_up_deriv, b_up_deriv_size, k_max, 0.0);
-    if (mu_ext == NULL || sig2_ext == NULL ||
-        b_lo_ext == NULL || b_up_ext == NULL ||
-        b_lo_deriv_ext == NULL || b_up_deriv_ext == NULL) {
-        free(mu_ext);
-        free(sig2_ext);
-        free(b_lo_ext);
-        free(b_up_ext);
-        free(b_lo_deriv_ext);
-        free(b_up_deriv_ext);
-        mexErrMsgIdAndTxt("ddm_fpt_full:OutOfMemory", "Out of memory");
-    }
+    int n = (int) ceil(t_max / delta_t);
+    plhs[0] = mxCreateDoubleMatrix(1, n, mxREAL);
+    plhs[1] = mxCreateDoubleMatrix(1, n, mxREAL);
+    ExtArray g1(ExtArray::shared_noowner(mxGetPr(plhs[0])), n);
+    ExtArray g2(ExtArray::shared_noowner(mxGetPr(plhs[1])), n);
     
     /* compute the pdf's */
-    if (has_leak)
-        err = ddm_fpt_full_leak(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                                b_lo_deriv_ext, b_up_deriv_ext,
-                                inv_leak, delta_t, k_max,
-                                mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-    else
-        err = ddm_fpt_full(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                           b_lo_deriv_ext, b_up_deriv_ext, delta_t, k_max,
-                           mxGetPr(plhs[0]), mxGetPr(plhs[1]));
-    
-    free(mu_ext);
-    free(sig2_ext);
-    free(b_lo_ext);
-    free(b_up_ext);
-    free(b_lo_deriv_ext);
-    free(b_up_deriv_ext);
+    if (has_leak) {
+        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                                    delta_t, inv_leak);
+        dm->pdfseq(n, g1, g2);
+        delete dm;
+    } else {
+        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                                    delta_t);
+        dm->pdfseq(n, g1, g2);
+        delete dm;
+    }
 
-    if (err == -1)
-        mexErrMsgIdAndTxt("ddm_fpt_full:OutOfMemory", "Out of memory");
-
-    
     /* normalise mass, if requested */
     if (normalise_mass)
-        mnorm(mxGetPr(plhs[0]), mxGetPr(plhs[1]), k_max, delta_t);
+        mnorm(mxGetPr(plhs[0]), mxGetPr(plhs[1]), n, delta_t);
 }
