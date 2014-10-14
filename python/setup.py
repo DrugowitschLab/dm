@@ -2,7 +2,7 @@ from numpy.distutils.core import setup, Extension
 
 module1 = Extension('ddm',
                     sources = ['ddmmodule.cpp', '../ddm_fpt_lib/ddm_fpt_lib.cpp'],
-                    extra_compile_args = ['-Wno-write-strings'])
+                    extra_compile_args = ['-Wno-write-strings -std=c++11'])
 
 setup (name = 'DDM',
        version = '1.0',

@@ -69,16 +69,11 @@ int is1DDoubleArray(PyArrayObject* x)
 /* method fpt(mu, bound, dt, tmax, ...) */
 static PyObject* ddmmod_fpt(PyObject* self, PyObject* args, PyObject* keywds)
 {
-    PyArrayObject *py_mu, *py_bound;
-    double *mu_data, *bound_data;
-    PyObject* mnorm_obj = NULL;
-    double dt, t_max;
-    static char* kwlist[] = {"mu", "bound", "dt", "tmax", "mnorm", NULL};
-    int n_max, mnorm_bool;
-    npy_intp out_size[1];
-    PyObject *py_g1, *py_g2, *py_tuple;
-
     /* process arguments */
+    PyArrayObject *py_mu, *py_bound;
+    double dt, t_max;
+    PyObject* mnorm_obj = NULL;
+    static char* kwlist[] = {"mu", "bound", "dt", "tmax", "mnorm", NULL};
     if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!O!dd|O", kwlist, 
                                      &PyArray_Type, &py_mu, &PyArray_Type, &py_bound,
                                      &dt, &t_max, &mnorm_obj))
@@ -93,73 +88,39 @@ static PyObject* ddmmod_fpt(PyObject* self, PyObject* args, PyObject* keywds)
         PyErr_SetString(PyExc_ValueError, "tmax needs to be larger than 0");
         return NULL;
     }
-    mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
-    mu_data = (double*) PyArray_DATA(py_mu);
-    bound_data = (double*) PyArray_DATA(py_bound);
+    bool mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
+    ExtArray mu(ExtArray::shared_noowner((double*) PyArray_DATA(py_mu)),
+                PyArray_DIM(py_mu, 0));
+    ExtArray bound(ExtArray::shared_noowner((double*) PyArray_DATA(py_bound)),
+                   PyArray_DIM(py_bound, 0));
 
     /* get output length and reserve space */
-    n_max = (int) ceil(t_max / dt);
-    out_size[0] = n_max;
-    py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    int n_max = (int) ceil(t_max / dt);
+    npy_intp out_size[1] = { n_max };
+    //out_size[0] = n_max;
+    PyObject* py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g1 == NULL) return NULL;
-    py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    PyObject* py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g2 == NULL) {
         Py_DECREF(py_g1);
         return NULL;
     }
+    ExtArray g1(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g1)), n_max);
+    ExtArray g2(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g2)), n_max);
 
-    /* decide which function to call, based on sizes of inputs */
-    if (PyArray_DIM(py_mu, 0) == 1) {
-        if (PyArray_DIM(py_bound, 0) == 1) {
-            /* size of mu == 1, bound == 1 */
-            ddm_fpt_const(mu_data[0], bound_data[0], dt, n_max,
-                          (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                          (double*) PyArray_DATA((PyArrayObject*) py_g2));
-        } else {
-            /* size of mu == 1, bound > 1 - replicate last element of bound */
-            double* bound_ext;
-            const int bound_size = PyArray_DIM(py_bound, 0);
-            int err;
-
-            bound_ext = extend_vector(bound_data, bound_size, n_max,
-                                      bound_data[bound_size - 1]);
-            if (bound_ext == NULL) goto memory_fail;
-
-            err = ddm_fpt_const_mu(mu_data[0], bound_ext, dt, n_max,
-                (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                (double*) PyArray_DATA((PyArrayObject*) py_g2));
-            free(bound_ext);
-            if (err == -1) goto memory_fail;
-        }
-    } else {
-        /* size of mu > 1 - replicate last element of both bound and mu */
-        double *bound_ext, *mu_ext;
-        const int mu_size = PyArray_DIM(py_mu, 0);
-        const int bound_size = PyArray_DIM(py_bound, 0);
-        int err;
-
-        mu_ext = extend_vector(mu_data, mu_size, n_max, mu_data[mu_size - 1]);
-        bound_ext = extend_vector(bound_data, bound_size, n_max, bound_data[bound_size - 1]);
-        if (mu_ext == NULL || bound_ext == NULL) {
-            free(mu_ext);  /* in case only one of the allocations failed */
-            free(bound_ext);
-            goto memory_fail;
-        }
-
-        err = ddm_fpt(mu_ext, bound_ext, dt, n_max,
-                      (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                      (double*) PyArray_DATA((PyArrayObject*) py_g2));
-        free(mu_ext);
-        free(bound_ext);
-        if (err == -1) goto memory_fail;
-    }
+    /* compute pdf */
+    DMBase* dm = DMBase::create(mu, bound, dt);
+    dm->pdfseq(n_max, g1, g2);
+    delete dm;
 
     if (mnorm_bool)
         mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
               (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
 
     /* create tuple to return */
-    py_tuple = PyTuple_New(2);
+    PyObject* py_tuple = PyTuple_New(2);
     if (py_tuple == NULL) goto memory_fail;
     PyTuple_SET_ITEM(py_tuple, 0, py_g1);
     PyTuple_SET_ITEM(py_tuple, 1, py_g2);
@@ -176,16 +137,11 @@ memory_fail:
 /* method fpt_w(a, k, bound, dt, tmax, ...) */
 static PyObject* ddmmod_fpt_w(PyObject* self, PyObject* args, PyObject* keywds)
 {
-    PyArrayObject *py_a, *py_bound;
-    double *a_ext, *bound_ext;
-    PyObject* mnorm_obj = NULL;
-    double k, dt, t_max;
-    static char* kwlist[] = {"a", "k", "bound", "dt", "tmax", "mnorm", NULL};
-    int n_max, mnorm_bool, err;
-    npy_intp out_size[1];
-    PyObject *py_g1, *py_g2, *py_tuple;
-
     /* process arguments */
+    static char* kwlist[] = {"a", "k", "bound", "dt", "tmax", "mnorm", NULL};
+    PyArrayObject *py_a, *py_bound;
+    double k, dt, t_max;
+    PyObject* mnorm_obj = NULL;
     if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!dO!dd|O", kwlist, 
                                      &PyArray_Type, &py_a, &k, &PyArray_Type, &py_bound,
                                      &dt, &t_max, &mnorm_obj))
@@ -200,43 +156,38 @@ static PyObject* ddmmod_fpt_w(PyObject* self, PyObject* args, PyObject* keywds)
         PyErr_SetString(PyExc_ValueError, "tmax needs to be larger than 0");
         return NULL;
     }
-    mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
+    bool mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
+    ExtArray a(ExtArray::shared_noowner((double*) PyArray_DATA(py_a)),
+                PyArray_DIM(py_a, 0));
+    ExtArray bound(ExtArray::shared_noowner((double*) PyArray_DATA(py_bound)),
+                   PyArray_DIM(py_bound, 0));
 
     /* get output length and reserve space */
-    n_max = (int) ceil(t_max / dt);
-    out_size[0] = n_max;
-    py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    int n_max = (int) ceil(t_max / dt);
+    npy_intp out_size[1] = { n_max };
+    PyObject* py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g1 == NULL) return NULL;
-    py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    PyObject* py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g2 == NULL) {
         Py_DECREF(py_g1);
         return NULL;
     }
+    ExtArray g1(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g1)), n_max);
+    ExtArray g2(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g2)), n_max);
 
-    /* extend arrays, if too short, and compute fpt */
-    a_ext = extend_vector((double*) PyArray_DATA(py_a), PyArray_DIM(py_a, 0), n_max,
-                          ((double*) PyArray_DATA(py_a))[PyArray_DIM(py_a, 0) - 1]);
-    bound_ext = extend_vector((double*) PyArray_DATA(py_bound), PyArray_DIM(py_bound, 0), n_max,
-                              ((double*) PyArray_DATA(py_bound))[PyArray_DIM(py_bound, 0) - 1]);
-    if (a_ext == NULL || bound_ext == NULL) {
-        free(a_ext);
-        free(bound_ext);
-        goto memory_fail;
-    }
-
-    err = ddm_fpt_w(a_ext, bound_ext, k, dt, n_max, 
-                    (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                    (double*) PyArray_DATA((PyArrayObject*) py_g2));
-    free(a_ext);
-    free(bound_ext);
-    if (err == -1) goto memory_fail;
+    /* compute fpt */
+    DMBase* dm = DMBase::createw(a, bound, k, dt);
+    dm->pdfseq(n_max, g1, g2);
+    delete dm;
 
     if (mnorm_bool)
         mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
               (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
 
     /* create tuple to return */
-    py_tuple = PyTuple_New(2);
+    PyObject* py_tuple = PyTuple_New(2);
     if (py_tuple == NULL) goto memory_fail;
     PyTuple_SET_ITEM(py_tuple, 0, py_g1);
     PyTuple_SET_ITEM(py_tuple, 1, py_g2);
@@ -254,17 +205,12 @@ memory_fail:
  *                 [inv_leak, mnorm]) */
 static PyObject* ddmmod_fpt_full(PyObject* self, PyObject* args, PyObject* keywds)
 {
-    PyArrayObject *py_mu, *py_sig2, *py_b_lo, *py_b_up, *py_b_lo_deriv, *py_b_up_deriv;
-    double *mu_ext, *sig2_ext, *b_lo_ext, *b_up_ext, *b_lo_deriv_ext, *b_up_deriv_ext;
-    PyObject* mnorm_obj = NULL;
-    double dt, t_max, inv_leak = 0.0;
+    /* process arguments */
     static char* kwlist[] = {"mu", "sig2", "b_lo", "b_up", "b_lo_deriv",
                              "b_up_deriv", "dt", "tmax", "inv_leak", "mnorm", NULL};
-    int n_max, mnorm_bool, err;
-    npy_intp out_size[1];
-    PyObject *py_g1, *py_g2, *py_tuple;
-
-    /* process arguments */
+    PyArrayObject *py_mu, *py_sig2, *py_b_lo, *py_b_up, *py_b_lo_deriv, *py_b_up_deriv;
+    double dt, t_max, inv_leak = 0.0;
+    PyObject* mnorm_obj = NULL;
     if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!O!O!O!O!O!dd|dO", kwlist, 
                                      &PyArray_Type, &py_mu,
                                      &PyArray_Type, &py_sig2,
@@ -290,71 +236,54 @@ static PyObject* ddmmod_fpt_full(PyObject* self, PyObject* args, PyObject* keywd
         PyErr_SetString(PyExc_ValueError, "inv_leak needs to be non-negative");
         return NULL;
     }
-    mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
+    bool mnorm_bool = (mnorm_obj != NULL && PyObject_IsTrue(mnorm_obj) == 1);
+    ExtArray mu(ExtArray::shared_noowner((double*) PyArray_DATA(py_mu)),
+                PyArray_DIM(py_mu, 0));
+    ExtArray sig2(ExtArray::shared_noowner((double*) PyArray_DATA(py_sig2)),
+                  PyArray_DIM(py_sig2, 0));
+    ExtArray b_lo(ExtArray::shared_noowner((double*) PyArray_DATA(py_b_lo)),
+                  PyArray_DIM(py_b_lo, 0));
+    ExtArray b_up(ExtArray::shared_noowner((double*) PyArray_DATA(py_b_up)),
+                  PyArray_DIM(py_b_up, 0));
+    ExtArray b_lo_deriv(ExtArray::shared_noowner((double*) PyArray_DATA(py_b_lo_deriv)),
+                        PyArray_DIM(py_b_lo_deriv, 0));
+    ExtArray b_up_deriv(ExtArray::shared_noowner((double*) PyArray_DATA(py_b_up_deriv)),
+                        PyArray_DIM(py_b_up_deriv, 0));
 
     /* get output length and reserve space */
-    n_max = (int) ceil(t_max / dt);
-    out_size[0] = n_max;
-    py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    int n_max = (int) ceil(t_max / dt);
+    npy_intp out_size[1] = { n_max };
+    PyObject* py_g1 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g1 == NULL) return NULL;
-    py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
+    PyObject* py_g2 = PyArray_SimpleNew(1, out_size, NPY_DOUBLE);
     if (py_g2 == NULL) {
         Py_DECREF(py_g1);
         return NULL;
     }
+    ExtArray g1(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g1)), n_max);
+    ExtArray g2(ExtArray::shared_noowner(
+        (double*) PyArray_DATA((PyArrayObject*) py_g2)), n_max);
 
-    /* extend arrays, if too short, and compute fpt */
-    /* copying all these vectors is not particularly efficient -
-       in a future version, it would be better to create an extended
-       vector class (in C++) that extends the array on the fly. */
-    mu_ext = extend_vector((double*) PyArray_DATA(py_mu), PyArray_DIM(py_mu, 0), n_max,
-                          ((double*) PyArray_DATA(py_mu))[PyArray_DIM(py_mu, 0) - 1]);
-    sig2_ext = extend_vector((double*) PyArray_DATA(py_sig2), PyArray_DIM(py_sig2, 0), n_max,
-                          ((double*) PyArray_DATA(py_sig2))[PyArray_DIM(py_sig2, 0) - 1]);
-    b_lo_ext = extend_vector((double*) PyArray_DATA(py_b_lo), PyArray_DIM(py_b_lo, 0), n_max,
-                             ((double*) PyArray_DATA(py_b_lo))[PyArray_DIM(py_b_up, 0) - 1]);
-    b_up_ext = extend_vector((double*) PyArray_DATA(py_b_up), PyArray_DIM(py_b_up, 0), n_max,
-                             ((double*) PyArray_DATA(py_b_up))[PyArray_DIM(py_b_up, 0) - 1]);
-    b_lo_deriv_ext = extend_vector((double*) PyArray_DATA(py_b_lo_deriv),
-                                   PyArray_DIM(py_b_lo_deriv, 0), n_max, 0.0);
-    b_up_deriv_ext = extend_vector((double*) PyArray_DATA(py_b_up_deriv),
-                                    PyArray_DIM(py_b_up_deriv, 0), n_max, 0.0);
-    if (mu_ext == NULL || sig2_ext == NULL || b_lo_ext == NULL ||
-        b_up_ext == NULL || b_lo_deriv_ext == NULL || b_up_deriv_ext == NULL) {
-        free(mu_ext);
-        free(sig2_ext);
-        free(b_lo_ext);
-        free(b_up_ext);
-        free(b_lo_deriv_ext);
-        free(b_up_deriv_ext);
-        goto memory_fail;
+
+    /* compute fpt */
+    if (inv_leak > 0.0) {
+        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                                    dt, inv_leak);
+        dm->pdfseq(n_max, g1, g2);
+        delete dm;
+    } else {
+        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, dt);
+        dm->pdfseq(n_max, g1, g2);
+        delete dm;
     }
-
-    if (inv_leak > 0.0)
-        err = ddm_fpt_full_leak(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                                b_lo_deriv_ext, b_up_deriv_ext,
-                                inv_leak, dt, n_max,
-                                (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                                (double*) PyArray_DATA((PyArrayObject*) py_g2));
-    else
-        err = ddm_fpt_full(mu_ext, sig2_ext, b_lo_ext, b_up_ext,
-                           b_lo_deriv_ext, b_up_deriv_ext, dt, n_max,
-                           (double*) PyArray_DATA((PyArrayObject*) py_g1),
-                           (double*) PyArray_DATA((PyArrayObject*) py_g2));
-    free(mu_ext);
-    free(sig2_ext);
-    free(b_lo_ext);
-    free(b_up_ext);
-    free(b_lo_deriv_ext);
-    free(b_up_deriv_ext);
-    if (err == -1) goto memory_fail;
 
     if (mnorm_bool)
         mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
               (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
 
     /* create tuple to return */
-    py_tuple = PyTuple_New(2);
+    PyObject* py_tuple = PyTuple_New(2);
     if (py_tuple == NULL) goto memory_fail;
     PyTuple_SET_ITEM(py_tuple, 0, py_g1);
     PyTuple_SET_ITEM(py_tuple, 1, py_g2);
