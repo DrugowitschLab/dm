@@ -48,7 +48,7 @@
 #include "mex.h"
 #include "matrix.h"
 
-#include "../ddm_fpt_lib/ddm_fpt_lib.h"
+#include "../src/ddm_fpt_lib.h"
 
 #include <string>
 #include <algorithm>

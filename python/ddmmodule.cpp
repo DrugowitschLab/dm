@@ -51,7 +51,7 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
 
-#include "../ddm_fpt_lib/ddm_fpt_lib.h"
+#include "../src/ddm_fpt_lib.h"
 
 /* evaluates if given array is non-empty 1D NumPy with double elements */
 int is1DDoubleArray(PyArrayObject* x)
