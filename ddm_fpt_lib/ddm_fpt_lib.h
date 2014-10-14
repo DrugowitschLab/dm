@@ -174,7 +174,7 @@ private:
 class DMConstDriftConstABound : public DMBase {
 public:
     DMConstDriftConstABound(value_t drift, value_t b_lo, value_t b_up, value_t dt)
-    : drift(drift), b_lo(b_lo), b_up(b_up), dt(dt) {}
+    : drift(drift), b_up(b_up), b_lo(b_lo), dt(dt) {}
 
     virtual ~DMConstDriftConstABound() {}
 
