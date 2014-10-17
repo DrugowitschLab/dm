@@ -26,11 +26,11 @@ In addition to perfect integration, the library provides leaky integration
 
 *dx =  (- x(t)/tau(t) + mu(t)) dt + sig(t) dW* ,
 
-with time constant \tau, as well as weighted integration
+with time constant *tau*, as well as weighted integration
 
 *dx = mu(t) (k mu(t) dt + dW)* .
 
-The library provides specialised classes for time-invariant drifts, *mu(t) = mu_0* for all *t*, time-invariant bounds, *theta(t) = theta_0* for all *t*, symmetric bounds, *theta_l(t) = - \theta_u(t)*, and leaks and weights (see below). If not otherwise mentioned, a constant unit diffusion variance is assumed, that is *sig^2(t) = 1* for all *t*.
+The library provides specialised classes for time-invariant drifts, *mu(t) = mu_0* for all *t*, time-invariant bounds, *theta(t) = theta_0* for all *t*, symmetric bounds, *theta_l(t) = - theta_u(t)*, and leaks and weights (see below). If not otherwise mentioned, a constant unit diffusion variance is assumed, that is *sig^2(t) = 1* for all *t*.
 
 Usage
 -----
@@ -125,13 +125,13 @@ References
 
 In general, the library computes the first-passage time densities by finding the solution to an integral equation, as described in
 
-    Smith PL (2000). Stochastic Dynamic Models of Response Time and Accuracy: A Foundational Primer. *Journal of Mathematical Psychology*, 44 (3). 408-463.
+Smith PL (2000). Stochastic Dynamic Models of Response Time and Accuracy: A Foundational Primer. *Journal of Mathematical Psychology*, 44 (3). 408-463.
 
 For constant drift and bounds, it instead uses a much faster method, based on an infinite series expansion of these densities, as described in.
 
-    Cox DR and Miller HD (1965). *The Theory of Stochastic Processes*. John Wiley & Sons, Inc.
+Cox DR and Miller HD (1965). *The Theory of Stochastic Processes*. John Wiley & Sons, Inc.
 
 and
 
-    Navarro DJ and Fuss IG (2009). Fast and accurate calculations for first-passage times in Wiener diffusion models. *Journal of Mathematical Psychology*, 53, 222-230.
+Navarro DJ and Fuss IG (2009). Fast and accurate calculations for first-passage times in Wiener diffusion models. *Journal of Mathematical Psychology*, 53, 222-230.
 
