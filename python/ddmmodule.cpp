@@ -113,11 +113,9 @@ static PyObject* ddmmod_fpt(PyObject* self, PyObject* args, PyObject* keywds)
     /* compute pdf */
     DMBase* dm = DMBase::create(mu, bound, dt);
     dm->pdfseq(n_max, g1, g2);
-    delete dm;
-
     if (mnorm_bool)
-        mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
-              (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
+        dm->mnorm(g1, g2, dt);
+    delete dm;
 
     /* create tuple to return */
     PyObject* py_tuple = PyTuple_New(2);
@@ -180,11 +178,9 @@ static PyObject* ddmmod_fpt_w(PyObject* self, PyObject* args, PyObject* keywds)
     /* compute fpt */
     DMBase* dm = DMBase::createw(a, bound, k, dt);
     dm->pdfseq(n_max, g1, g2);
-    delete dm;
-
     if (mnorm_bool)
-        mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
-              (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
+        dm->mnorm(g1, g2, dt);
+    delete dm;
 
     /* create tuple to return */
     PyObject* py_tuple = PyTuple_New(2);
@@ -267,20 +263,16 @@ static PyObject* ddmmod_fpt_full(PyObject* self, PyObject* args, PyObject* keywd
 
 
     /* compute fpt */
-    if (inv_leak > 0.0) {
-        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
-                                    dt, inv_leak);
-        dm->pdfseq(n_max, g1, g2);
-        delete dm;
-    } else {
-        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, dt);
-        dm->pdfseq(n_max, g1, g2);
-        delete dm;
-    }
-
+    DMBase* dm = nullptr;
+    if (inv_leak > 0.0)
+        dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                            dt, inv_leak);
+    else
+        dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, dt);
+    dm->pdfseq(n_max, g1, g2);
     if (mnorm_bool)
-        mnorm((double*) PyArray_DATA((PyArrayObject*) py_g1),
-              (double*) PyArray_DATA((PyArrayObject*) py_g2), n_max, dt);
+        dm->mnorm(g1, g2, dt);
+    delete dm;
 
     /* create tuple to return */
     PyObject* py_tuple = PyTuple_New(2);

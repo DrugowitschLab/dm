@@ -151,17 +151,14 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     ExtArray g1(ExtArray::shared_noowner(mxGetPr(plhs[0])), k_max);
     ExtArray g2(ExtArray::shared_noowner(mxGetPr(plhs[1])), k_max);
 
-    if (weighted_ddm) {
-        DMBase* dm = DMBase::createw(mu, bound, k, delta_t);
-        dm->pdfseq(k_max, g1, g2);
-        delete dm;
-    } else {
-        DMBase* dm = DMBase::create(mu, bound, delta_t);
-        dm->pdfseq(k_max, g1, g2);
-        delete dm;
-    }
-    
-    /* normalise mass, if requested */
+    /* compute fpt pdf */
+    DMBase* dm = nullptr;
+    if (weighted_ddm)
+        dm = DMBase::createw(mu, bound, k, delta_t);
+    else
+        dm = DMBase::create(mu, bound, delta_t);
+    dm->pdfseq(k_max, g1, g2);
     if (normalise_mass)
-        mnorm(mxGetPr(plhs[0]), mxGetPr(plhs[1]), k_max, delta_t);
+        dm->mnorm(g1, g2, delta_t);
+    delete dm;
 }

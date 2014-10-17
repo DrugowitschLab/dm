@@ -557,28 +557,3 @@ void DMGeneralLeakDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
     }
 }
 
-
-/** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
- *
- * Function makes sure that g1(t) >= 0, g2(t) >= 0, for all t, and that
- * (sum(g1) + sum(g2) * delta_t) = 1. It does so by eventually adding mass to
- * the last elements of g1 / g2, such that the ratio
- * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
- * unchanged.
- */
-void mnorm(double g1[], double g2[], int n, double delta_t)
-{
-    /* remove negative elements and compute sum */
-    double g1_sum = 0.0, g2_sum = 0.0;
-    for (int i = 0; i < n; ++i) {
-        if (g1[i] < 0) g1[i] = 0;
-        else g1_sum += g1[i];
-        if (g2[i] < 0) g2[i] = 0;
-        else g2_sum += g2[i];
-    }
-    
-    /* adjust last elements accoring to ratio */
-    double p = g1_sum / (g1_sum + g2_sum);
-    g1[n - 1] += p / delta_t - g1_sum;
-    g2[n - 1] += (1 - p) / delta_t - g2_sum;
-}

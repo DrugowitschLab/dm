@@ -172,19 +172,15 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     ExtArray g2(ExtArray::shared_noowner(mxGetPr(plhs[1])), n);
     
     /* compute the pdf's */
-    if (has_leak) {
-        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
-                                    delta_t, inv_leak);
-        dm->pdfseq(n, g1, g2);
-        delete dm;
-    } else {
-        DMBase* dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
-                                    delta_t);
-        dm->pdfseq(n, g1, g2);
-        delete dm;
-    }
-
-    /* normalise mass, if requested */
+    DMBase* dm = nullptr;
+    if (has_leak)
+        dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                            delta_t, inv_leak);
+    else
+        dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
+                            delta_t);
+    dm->pdfseq(n, g1, g2);
     if (normalise_mass)
-        mnorm(mxGetPr(plhs[0]), mxGetPr(plhs[1]), n, delta_t);
+        dm->mnorm(g1, g2, delta_t);
+    delete dm;
 }

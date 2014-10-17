@@ -343,14 +343,4 @@ private:
 };
 
 
-/** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
- *
- * Function makes sure that g1(t) >= 0, g2(t) >= 0, for all t, and that
- * (sum(g1) + sum(g2) * delta_t) = 1. It does so by eventually adding mass to
- * the last elements of g1 / g2, such that the ratio
- * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
- * unchanged.
- */
-void mnorm(double g1[], double g2[], int n, double delta_t);
-
 #endif
