@@ -46,6 +46,9 @@ public:
     static ExtArray const_array(value_t x)
     { return ExtArray(shared_noowner(nullptr), x, 0); }
 
+    ExtArray(size_t data_size)
+    : data(shared_owner(new value_t[data_size])), last(0.0), data_size(data_size) {} 
+
     ExtArray(data_t d, size_t data_size)
     : data(d), last(data_size > 0 ? d.get()[data_size-1] : 0),
       data_size(data_size) {}
@@ -65,21 +68,11 @@ public:
     value_t operator[](size_t idx) const
     { return idx >= data_size ? last : data.get()[idx]; }
 
-    // returns cumulative sum of f * (x[0], ..., x[size()-1])
-    ExtArray cumsum(value_t f) const
-    {
-        value_t* x = new value_t[data_size];
-        if (data_size > 0) {
-            value_t cursum = f * data.get()[0];
-            x[0] = cursum;
-            for (size_t i = 1; i < data_size; ++i) {
-                cursum += f * data.get()[i];
-                x[i] = cursum;
-            }
-            return ExtArray(shared_owner(x), cursum, data_size);
-        } else
-            return ExtArray(shared_owner(x), 0, 0);
-    }
+    // returns cumulative sum of f * (x[0], ..., x[data_size_out-1])
+    ExtArray cumsum(value_t f, size_t data_size_out) const;
+
+    // returns the finite difference derivative, assuming steps of dt
+    ExtArray deriv(value_t dt) const;
 
 private:
     data_t data;
@@ -99,6 +92,16 @@ public:
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2) = 0;
     virtual value_t pdfu(value_t t) = 0;
     virtual value_t pdfl(value_t t) = 0;
+
+    /** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
+     *
+     * Function makes sure that g1(t) >= 0, g2(t) >= 0, for all t, and that
+     * (sum(g1) + sum(g2) * delta_t) = 1. It does so by eventually adding mass to
+     * the last elements of g1 / g2, such that the ratio
+     * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
+     * unchanged.
+     */
+    static void mnorm(ExtArray& g1, ExtArray& g2, value_t dt);
 
     // factory functions
     static DMBase* create(const ExtArray& drift, const ExtArray& bound,
@@ -197,7 +200,7 @@ private:
     static bool useshorttseries(value_t t, value_t tol)
     { return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
              sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0; }
-    /** fpt_asymlo - fpt for upper bound, for const drift/bounds
+    /** fpt_asymup - fpt for upper bound, for const drift/bounds
      * The required arguments are
      * c1 = (bu - bl)^2
      * c2 = mu^2 / 2

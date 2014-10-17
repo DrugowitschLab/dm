@@ -12,6 +12,66 @@
 #include <cassert>
 #include <vector>
 
+
+ExtArray ExtArray::cumsum(value_t f, size_t data_size_out) const
+{
+    value_t* x = new value_t[data_size_out];
+    if (data_size_out > 0) {
+        value_t cursum = f * (*this)[0];
+        x[0] = cursum;
+        for (size_t i = 1; i < data_size_out; ++i) {
+            cursum += f * (*this)[i];
+            x[i] = cursum;
+        }
+        return ExtArray(shared_owner(x), cursum, data_size_out);
+    } else
+        return ExtArray(shared_owner(x), 0, 0);
+}
+
+
+ExtArray ExtArray::deriv(value_t dt) const
+{
+    if (isconst()) return const_array(0.0);
+    if (data_size == 1) {
+        const value_t dx = (last - data.get()[0]) / (2 * dt);
+        value_t* x = new value_t[2];
+        x[0] = dx;   /* left and right finite differences */
+        x[1] = dx;
+        return ExtArray(shared_owner(x), 0.0, 2);
+    } else {
+        const value_t dt2 = 2 * dt;
+        value_t* x = new value_t[data_size + 1];
+        /* left/right finite difference for edges, otherwise central diff */
+        x[0] = (data.get()[1] - data.get()[0]) / dt;
+        for (size_t i = 1; i < data_size-1; ++i)
+            x[i] = (data.get()[i + 1] - data.get()[i - 1]) / dt2;
+        if (data_size >= 3)
+            x[data_size - 1] = (last - data.get()[data_size - 2]) / dt2;
+        x[data_size] = (last - data.get()[data_size-1]) / dt;
+        return ExtArray(shared_owner(x), 0.0, data_size + 1);
+    }
+}
+
+
+void DMBase::mnorm(ExtArray& g1, ExtArray& g2, value_t dt)
+{
+    const size_t n = std::max(g1.size(), g2.size());
+    /* remove negative elements and compute sum */
+    value_t g1_sum = 0.0, g2_sum = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        if (g1[i] < 0) g1[i] = 0;
+        else g1_sum += g1[i];
+        if (g2[i] < 0) g2[i] = 0;
+        else g2_sum += g2[i];
+    }
+    
+    /* adjust last elements accoring to ratio */
+    double p = g1_sum / (g1_sum + g2_sum);
+    g1[n - 1] += p / dt - g1_sum;
+    g2[n - 1] += (1 - p) / dt - g2_sum;
+}
+
+
 DMBase* DMBase::create(const ExtArray& drift, const ExtArray& bound,
                        value_t dt)
 {
@@ -155,18 +215,12 @@ void DMConstDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
 
-    /* precompute some constants */
+    /* precompute some constants / derivatives */
     const double dt_2 = 2.0 * dt;
     const double pi_dt_2 = PI * dt_2;
     const double drift_dt = dt * drift;
     const double drift_2 = -2 * drift;
-
-    /* derivative of bound */
-    std::vector<double> bound_deriv(n);
-    for (int j = 1; j < n; ++j) {
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
-    }
-    bound_deriv[n - 1] = bound_deriv[n - 2];
+    auto bound_deriv = bound.deriv(dt);
 
     /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * dt * (i + 1)) 
        norm_t[i] = 1 / (dt * (i + 1)) */
@@ -222,16 +276,8 @@ void DMVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
     const double pi_dt_2 = PI * dt_2;
     
     /* cumulative drift, and derivative of bound */
-    std::vector<double> cum_drift(n);
-    std::vector<double> bound_deriv(n);
-    double curr_cum_drift = dt * drift[0];
-    cum_drift[0] = curr_cum_drift;
-    for (int j = 1; j < n; ++j) {
-        curr_cum_drift += dt * drift[j];
-        cum_drift[j] = curr_cum_drift;
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
-    }
-    bound_deriv[n - 1] = bound_deriv[n - 2];
+    auto cum_drift = drift.cumsum(dt, n);
+    auto bound_deriv = bound.deriv(dt);
 
     /* norm_sqrt_t[i] = 1 / sqrt(2 * pi * dt * (i + 1)) 
        norm_t[i] = 1 / (dt * (i + 1)) */
@@ -298,15 +344,13 @@ void DMWVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
     /* a2(t) = drift(t)^2, A_t(t) = \int^t a2(s) ds, and derivative of bound */
     std::vector<double> a2(n);
     std::vector<double> A(n);
-    std::vector<double> bound_deriv(n);
     double cum_a2 = dt * (a2[0] = drift[0] * drift[0]);
     A[0] = cum_a2;
     for (int j = 1; j < n; ++j) {
         cum_a2 += dt * (a2[j] = drift[j] * drift[j]);
         A[j] = cum_a2;
-        bound_deriv[j - 1] = (bound[j] - bound[j - 1]) / dt;
     }
-    bound_deriv[n - 1] = bound_deriv[n - 2];
+    auto bound_deriv = bound.deriv(dt);
 
     /* fill up g1 and g2 recursively */
     for (int i = 0; i < n; ++i) {
@@ -349,23 +393,11 @@ void DMGeneralDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
     
-    /* precompute some constants */
+    /* precompute some constants and cumulatives */
     const double sqrt_2_pi = 1 / sqrt(2 * PI);
     const double dt_sqrt_2_pi = dt * sqrt_2_pi;
-    
-    /* cumulative mu and sig2 */
-    std::vector<double> cum_drift(n);
-    std::vector<double> cum_sig2(n);
-    double curr_cum_drift = dt * drift[0];
-    cum_drift[0] = curr_cum_drift;
-    double curr_cum_sig2 = dt * sig2[0];
-    cum_sig2[0] = curr_cum_sig2;
-    for (int j = 1; j < n; ++j) {
-        curr_cum_drift += dt * drift[j];
-        cum_drift[j] = curr_cum_drift;
-        curr_cum_sig2 += dt * sig2[j];
-        cum_sig2[j] = curr_cum_sig2;
-    }
+    auto cum_drift = drift.cumsum(dt, n);
+    auto cum_sig2 = sig2.cumsum(dt, n);
     
     /* fill up g1 and g2 recursively */
     for (int k = 0; k < n; ++k) {
