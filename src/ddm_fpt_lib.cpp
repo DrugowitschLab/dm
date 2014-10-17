@@ -119,13 +119,34 @@ DMBase* DMBase::create(const ExtArray& drift, const ExtArray& sig2,
                        const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                        value_t dt, value_t invleak)
 {
-    const bool unit_sig2 = (sig2.isconst() <= 1 && sig2[0] == 1.0);
     const bool infinvleak = isinf(invleak);
-    // TODO: add more specialised cases
-    if (infinvleak)
+    if (infinvleak) {
+        const bool unit_sig2 = (sig2.isconst() <= 1 && sig2[0] == 1.0);
+        const bool constbounds = (b_lo.isconst() && b_up.isconst());
+        if (unit_sig2 && constbounds) {
+            const bool symconstbounds = (constbounds && b_up[0] == -b_up[0]);
+            if (drift.isconst()) {
+                if (symconstbounds)
+                    // const drift, const sym bounds, unit variance
+                    return new DMConstDriftConstBound(drift[0], b_up[0], dt);
+                else
+                    // const drift, const asym bounds, unit variance
+                    return new DMConstDriftConstABound(drift[0], b_lo[0], b_up[0], dt);
+            } else {
+                if (symconstbounds)
+                    // var drift, const sym bounds, unit variance
+                    return new DMVarDriftVarBound(drift, b_up, dt);
+                else
+                    // var drift, const asym bounds, unit variance
+                    return new DMGeneralDeriv(drift, sig2, b_lo, b_up,
+                                              b_lo_deriv, b_up_deriv, dt);
+            }
+        }
+        // general case, no leak
         return new DMGeneralDeriv(drift, sig2, b_lo, b_up,
                                   b_lo_deriv, b_up_deriv, dt);
-    else
+    } else
+        // general case, leak
         return new DMGeneralLeakDeriv(drift, sig2, b_lo, b_up,
                                       b_lo_deriv, b_up_deriv, invleak, dt);
 }
