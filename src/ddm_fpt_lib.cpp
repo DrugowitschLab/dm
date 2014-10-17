@@ -53,7 +53,29 @@ ExtArray ExtArray::deriv(value_t dt) const
 }
 
 
-void DMBase::mnorm(ExtArray& g1, ExtArray& g2, value_t dt)
+DMBase::value_t DMBase::pdfu(value_t t)
+{
+    if (t == 0.0) return 0.0;
+    const value_t n = t / dt;
+    const size_t nup = static_cast<int>(ceil(n));
+    ExtArray g1(nup), g2(nup);
+    pdfseq(nup, g1, g2);
+    return lininterp(nup == 1 ? 0.0 : g1[nup-2], g1[nup-1], n - nup + 1.0);
+}
+
+
+DMBase::value_t DMBase::pdfl(value_t t)
+{
+    if (t == 0.0) return 0.0;
+    const value_t n = t / dt;
+    const size_t nup = static_cast<int>(ceil(n));
+    ExtArray g1(nup), g2(nup);
+    pdfseq(nup, g1, g2);
+    return lininterp(nup == 1 ? 0.0 : g2[nup-2], g2[nup-1], n - nup + 1.0);
+}
+
+
+void DMBase::mnorm(ExtArray& g1, ExtArray& g2) const
 {
     const size_t n = std::max(g1.size(), g2.size());
     /* remove negative elements and compute sum */

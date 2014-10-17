@@ -87,11 +87,14 @@ public:
     typedef double value_t;
     typedef int size_t;
 
+    DMBase(value_t dt)
+    : dt(dt) {}
+
     virtual ~DMBase() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2) = 0;
-    virtual value_t pdfu(value_t t) = 0;
-    virtual value_t pdfl(value_t t) = 0;
+    virtual value_t pdfu(value_t t);
+    virtual value_t pdfl(value_t t);
 
     /** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
      *
@@ -101,7 +104,7 @@ public:
      * sum(g1) / (sum(g1) + sum(g2)) (after removing negative values) remains
      * unchanged.
      */
-    static void mnorm(ExtArray& g1, ExtArray& g2, value_t dt);
+    void mnorm(ExtArray& g1, ExtArray& g2) const;
 
     // factory functions
     static DMBase* create(const ExtArray& drift, const ExtArray& bound,
@@ -118,6 +121,11 @@ protected:
     static constexpr double PI = 3.14159265358979323846;
     static constexpr double TWOPI = 2 * PI;
     static constexpr double PISQR = PI * PI;
+    value_t dt;
+
+private:
+    static value_t lininterp(value_t x1, value_t x2, value_t w)
+    { return x1 + w * (x2  - x1); }
 };
 
 
@@ -129,7 +137,7 @@ protected:
 class DMConstDriftConstBound : public DMBase {
 public:
     DMConstDriftConstBound(value_t drift, value_t bound, value_t dt)
-    : drift(drift), bound(bound), dt(dt) {}
+    : DMBase(dt), drift(drift), bound(bound) { }
 
     virtual ~DMConstDriftConstBound() {}
 
@@ -142,7 +150,6 @@ public:
 private:
     value_t drift;
     value_t bound;
-    value_t dt;
 
     static constexpr double SERIES_ACC = 1e-29;
 
@@ -177,7 +184,7 @@ private:
 class DMConstDriftConstABound : public DMBase {
 public:
     DMConstDriftConstABound(value_t drift, value_t b_lo, value_t b_up, value_t dt)
-    : drift(drift), b_up(b_up), b_lo(b_lo), dt(dt) {}
+    : DMBase(dt), drift(drift), b_up(b_up), b_lo(b_lo) {}
 
     virtual ~DMConstDriftConstABound() {}
 
@@ -192,7 +199,6 @@ public:
 private:
     value_t drift;
     value_t b_up, b_lo;
-    value_t dt;
 
     static constexpr double SERIES_ACC = 1e-29;
 
@@ -235,20 +241,15 @@ private:
 class DMConstDriftVarBound : public DMBase {
 public:
     DMConstDriftVarBound(value_t drift, const ExtArray& bound, value_t dt)
-    : drift(drift), bound(bound), dt(dt) {}
+    : DMBase(dt), drift(drift), bound(bound) {}
 
     virtual ~DMConstDriftVarBound() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
-    virtual value_t pdfu(value_t t)
-    { throw std::runtime_error("pdfu() not available for DMConstDriftVarBound"); }
-    virtual value_t pdfl(value_t t)
-    { throw std::runtime_error("pdfl() not available for DMConstDriftVarBound"); }
 
 private:
     value_t drift;
     ExtArray bound;
-    value_t dt;
 };
 
 
@@ -256,19 +257,14 @@ private:
 class DMVarDriftVarBound : public DMBase {
 public:
     DMVarDriftVarBound(const ExtArray& drift, const ExtArray& bound, value_t dt)
-    : drift(drift), bound(bound), dt(dt) {}
+    : DMBase(dt), drift(drift), bound(bound) {}
 
     virtual ~DMVarDriftVarBound() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
-    virtual value_t pdfu(value_t t)
-    { throw std::runtime_error("pdfu() not available for DMVarDriftVarBound"); }
-    virtual value_t pdfl(value_t t)
-    { throw std::runtime_error("pdfl() not available for DMVarDriftVarBound"); }
 
 private:
     ExtArray drift, bound;
-    value_t dt;
 };
 
 
@@ -277,19 +273,15 @@ class DMWVarDriftVarBound : public DMBase {
 public:
     DMWVarDriftVarBound(const ExtArray& drift, const ExtArray& bound, 
                         value_t k, value_t dt)
-    : drift(drift), bound(bound), k(k), dt(dt) {}
+    : DMBase(dt), drift(drift), bound(bound), k(k) {}
 
     virtual ~DMWVarDriftVarBound() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
-    virtual value_t pdfu(value_t t)
-    { throw std::runtime_error("pdfu() not available for DMWVarDriftVarBound"); }
-    virtual value_t pdfl(value_t t)
-    { throw std::runtime_error("pdfl() not available for DMWVarDriftVarBound"); }
 
 private:
     ExtArray drift, bound;
-    value_t k, dt;
+    value_t k;
 };
 
 
@@ -301,20 +293,15 @@ public:
                    const ExtArray& b_lo, const ExtArray& b_up,
                    const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                    value_t dt)
-    : drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
-      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv), dt(dt) {}
+    : DMBase(dt), drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
+      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv) {}
 
     virtual ~DMGeneralDeriv() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
-    virtual value_t pdfu(value_t t)
-    { throw std::runtime_error("pdfu() not available for DMGeneralDeriv"); }
-    virtual value_t pdfl(value_t t)
-    { throw std::runtime_error("pdfl() not available for DMGeneralDeriv"); }
 
 private:
     ExtArray drift, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv;
-    value_t dt;
 };
 
 
@@ -326,20 +313,16 @@ public:
                        const ExtArray& b_lo, const ExtArray& b_up,
                        const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                        value_t invleak, value_t dt)
-    : drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
-      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv), invleak(invleak), dt(dt) {}
+    : DMBase(dt), drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
+      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv), invleak(invleak) {}
 
     virtual ~DMGeneralLeakDeriv() {}
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
-    virtual value_t pdfu(value_t t)
-    { throw std::runtime_error("pdfu() not available for DMGeneralLeakDeriv"); }
-    virtual value_t pdfl(value_t t)
-    { throw std::runtime_error("pdfl() not available for DMGeneralLeakDeriv"); }
 
 private:
     ExtArray drift, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv;
-    value_t invleak, dt;
+    value_t invleak;
 };
 
 

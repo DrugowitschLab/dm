@@ -158,7 +158,6 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     else
         dm = DMBase::create(mu, bound, delta_t);
     dm->pdfseq(k_max, g1, g2);
-    if (normalise_mass)
-        dm->mnorm(g1, g2, delta_t);
+    if (normalise_mass) dm->mnorm(g1, g2);
     delete dm;
 }

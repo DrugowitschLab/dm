@@ -180,7 +180,6 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv,
                             delta_t);
     dm->pdfseq(n, g1, g2);
-    if (normalise_mass)
-        dm->mnorm(g1, g2, delta_t);
+    if (normalise_mass) dm->mnorm(g1, g2);
     delete dm;
 }

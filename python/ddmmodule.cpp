@@ -113,8 +113,7 @@ static PyObject* ddmmod_fpt(PyObject* self, PyObject* args, PyObject* keywds)
     /* compute pdf */
     DMBase* dm = DMBase::create(mu, bound, dt);
     dm->pdfseq(n_max, g1, g2);
-    if (mnorm_bool)
-        dm->mnorm(g1, g2, dt);
+    if (mnorm_bool) dm->mnorm(g1, g2);
     delete dm;
 
     /* create tuple to return */
@@ -178,8 +177,7 @@ static PyObject* ddmmod_fpt_w(PyObject* self, PyObject* args, PyObject* keywds)
     /* compute fpt */
     DMBase* dm = DMBase::createw(a, bound, k, dt);
     dm->pdfseq(n_max, g1, g2);
-    if (mnorm_bool)
-        dm->mnorm(g1, g2, dt);
+    if (mnorm_bool) dm->mnorm(g1, g2);
     delete dm;
 
     /* create tuple to return */
@@ -270,8 +268,7 @@ static PyObject* ddmmod_fpt_full(PyObject* self, PyObject* args, PyObject* keywd
     else
         dm = DMBase::create(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, dt);
     dm->pdfseq(n_max, g1, g2);
-    if (mnorm_bool)
-        dm->mnorm(g1, g2, dt);
+    if (mnorm_bool) dm->mnorm(g1, g2);
     delete dm;
 
     /* create tuple to return */
