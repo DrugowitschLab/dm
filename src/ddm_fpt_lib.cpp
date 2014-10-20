@@ -75,6 +75,22 @@ DMBase::value_t DMBase::pdfl(value_t t)
 }
 
 
+// generic Euler-Maruyama Method implementation, assuming sig2=1, always
+DMSample DMBase::rand(rngeng_t& rngeng) const
+{
+    std::normal_distribution<value_t> randn;
+    value_t x = drift(0) * dt_ + sqrt_dt_ * randn(rngeng);
+    size_t n = 1;
+    int cb = crossed_bounds(x, 1);
+    while (!cb) {
+        x += drift(n) * dt_ + sqrt_dt_ * randn(rngeng);
+        n += 1;
+        cb = crossed_bounds(x, n);
+    }
+    return DMSample(n * dt_, cb == 1);
+}
+
+
 void DMBase::mnorm(ExtArray& g1, ExtArray& g2) const
 {
     const size_t n = std::max(g1.size(), g2.size());
@@ -432,6 +448,23 @@ void DMWVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 }
 
 
+DMSample DMWVarDriftVarBound::rand(rngeng_t& rngeng) const
+{
+    // dx = mu(t) (k mu(t) dt + dW) .
+    std::normal_distribution<value_t> randn;
+    value_t x = drift(0) * (k_ * drift(0) * dt_ + sqrt_dt_ * randn(rngeng));
+    size_t n = 1;
+    int cb = crossed_bounds(x, 1);
+    while (!cb) {
+        const value_t drift_n = drift(n);
+        x += drift_n * (k_ * drift_n * dt_ + sqrt_dt_ * randn(rngeng));
+        n += 1;
+        cb = crossed_bounds(x, n);
+    }
+    return DMSample(n * dt_, cb == 1);
+}
+
+
 void DMGeneralDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
@@ -497,6 +530,21 @@ void DMGeneralDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
         g1[k] = std::max(g1_k, 0.0);
         g2[k] = std::max(g2_k, 0.0);
     }
+}
+
+
+DMSample DMGeneralDeriv::rand(rngeng_t& rngeng) const
+{
+    std::normal_distribution<value_t> randn;
+    value_t x = drift(0) * dt_ + sqrt_dt_ * sqrt(sig2(0)) * randn(rngeng);
+    size_t n = 1;
+    int cb = crossed_bounds(x, 1);
+    while (!cb) {
+        x += drift(n) * dt_ + sqrt_dt_ * sqrt(sig2(n)) * randn(rngeng);
+        n += 1;
+        cb = crossed_bounds(x, n);
+    }
+    return DMSample(n * dt_, cb == 1);
 }
 
 
@@ -598,5 +646,21 @@ void DMGeneralLeakDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
         g1[k] = std::max(g1_k, 0.0);
         g2[k] = std::max(g2_k, 0.0);
     }
+}
+
+
+DMSample DMGeneralLeakDeriv::rand(rngeng_t& rngeng) const
+{
+    // dx = (- x(t)/tau(t) + mu(t)) dt + sig(t) dW
+    std::normal_distribution<value_t> randn;
+    value_t x = drift(0) * dt_ + sqrt_dt_ * sqrt(sig2(0)) * randn(rngeng);
+    size_t n = 1;
+    int cb = crossed_bounds(x, 1);
+    while (!cb) {
+        x = (drift(n) - invleak_ * x) * dt_ + sqrt_dt_ * sqrt(sig2(n)) * randn(rngeng);
+        n += 1;
+        cb = crossed_bounds(x, n);
+    }
+    return DMSample(n * dt_, cb == 1);
 }
 

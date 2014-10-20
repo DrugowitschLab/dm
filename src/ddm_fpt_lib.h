@@ -14,6 +14,7 @@
 #include<algorithm>
 #include<memory>
 #include<limits>
+#include<random>
 
 /**
  * An array of doubles that returns values beyond its size.
@@ -81,11 +82,25 @@ private:
 };
 
 
+class DMSample {
+public:
+    DMSample(double t, bool upper_bound)
+    : t_(t), upper_bound_(upper_bound) {}
+
+    double t() const            { return t_; }
+    bool upper_bound() const    { return upper_bound_; }
+private:
+    double t_;
+    bool upper_bound_;
+};
+
+
 // diffusion model base class
 class DMBase {
 public:
     typedef double value_t;
     typedef int size_t;
+    typedef std::mt19937 rngeng_t;
 
     DMBase(value_t dt)
     : dt_(dt), sqrt_dt_(sqrt(dt)) { }
@@ -103,6 +118,9 @@ public:
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2) = 0;
     virtual value_t pdfu(value_t t);
     virtual value_t pdfl(value_t t);
+
+    // functions to sample first-passage times and choices
+    virtual DMSample rand(rngeng_t& rngeng) const;
 
     /** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
      *
@@ -131,6 +149,10 @@ protected:
     static constexpr double PISQR = PI * PI;
     value_t dt_;
     value_t sqrt_dt_;
+
+    // 0 - not crossed, 1 - upper bound, -1 - lower bound
+    int crossed_bounds(value_t x, size_t n) const
+    { return x >= b_up(n) ? 1 : (x <= b_lo(n) ? -1 : 0); }
 
 private:
     static value_t lininterp(value_t x1, value_t x2, value_t w)
@@ -308,6 +330,8 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
+    virtual DMSample rand(rngeng_t& rngeng) const;
+
 private:
     ExtArray drift_, bound_;
     value_t k_;
@@ -334,6 +358,8 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
+    virtual DMSample rand(rngeng_t& rngeng) const;
+
 private:
     ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;
 };
@@ -358,6 +384,8 @@ public:
     virtual value_t b_up(size_t n) const   { return b_up_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
+
+    virtual DMSample rand(rngeng_t& rngeng) const;
 
 private:
     ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;
