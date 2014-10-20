@@ -14,7 +14,6 @@
 #include<algorithm>
 #include<memory>
 #include<limits>
-#include<stdexcept>
 
 /**
  * An array of doubles that returns values beyond its size.
@@ -47,26 +46,27 @@ public:
     { return ExtArray(shared_noowner(nullptr), x, 0); }
 
     ExtArray(size_t data_size)
-    : data(shared_owner(new value_t[data_size])), last(0.0), data_size(data_size) {} 
+    : data_(shared_owner(new value_t[data_size])), last_(0.0),
+      data_size_(data_size) {} 
 
     ExtArray(data_t d, size_t data_size)
-    : data(d), last(data_size > 0 ? d.get()[data_size-1] : 0),
-      data_size(data_size) {}
+    : data_(d), last_(data_size > 0 ? d.get()[data_size-1] : 0),
+      data_size_(data_size) {}
 
     ExtArray(data_t d, value_t last, size_t data_size)
-    : data(d), last(last), data_size(data_size) {}
+    : data_(d), last_(last), data_size_(data_size) {}
 
     size_t size() const 
-    { return data_size; }
+    { return data_size_; }
 
     bool isconst() const
-    { return data_size == 0 || (data_size == 1 && data.get()[0] == last); }
+    { return data_size_ == 0 || (data_size_ == 1 && data_.get()[0] == last_); }
 
     // [idx] for idx >= size() assigns last element
     value_t& operator[](size_t idx)
-    { return idx >= data_size ? last : data.get()[idx]; }
+    { return idx >= data_size_ ? last_ : data_.get()[idx]; }
     value_t operator[](size_t idx) const
-    { return idx >= data_size ? last : data.get()[idx]; }
+    { return idx >= data_size_ ? last_ : data_.get()[idx]; }
 
     // returns cumulative sum of f * (x[0], ..., x[data_size_out-1])
     ExtArray cumsum(value_t f, size_t data_size_out) const;
@@ -75,9 +75,9 @@ public:
     ExtArray deriv(value_t dt) const;
 
 private:
-    data_t data;
-    value_t last;
-    size_t data_size;
+    data_t data_;
+    value_t last_;
+    size_t data_size_;
 };
 
 
@@ -88,10 +88,18 @@ public:
     typedef int size_t;
 
     DMBase(value_t dt)
-    : dt(dt) {}
+    : dt_(dt), sqrt_dt_(sqrt(dt)) { }
 
     virtual ~DMBase() {}
 
+    // getters
+    value_t dt() const                         { return dt_; }
+    virtual value_t sig2(size_t n) const       { return 1.0; }
+    virtual value_t drift(size_t n) const = 0;
+    virtual value_t b_lo(size_t n) const = 0;
+    virtual value_t b_up(size_t n) const = 0;
+
+    // functions to compute first-passage time density
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2) = 0;
     virtual value_t pdfu(value_t t);
     virtual value_t pdfl(value_t t);
@@ -121,7 +129,8 @@ protected:
     static constexpr double PI = 3.14159265358979323846;
     static constexpr double TWOPI = 2 * PI;
     static constexpr double PISQR = PI * PI;
-    value_t dt;
+    value_t dt_;
+    value_t sqrt_dt_;
 
 private:
     static value_t lininterp(value_t x1, value_t x2, value_t w)
@@ -137,19 +146,23 @@ private:
 class DMConstDriftConstBound : public DMBase {
 public:
     DMConstDriftConstBound(value_t drift, value_t bound, value_t dt)
-    : DMBase(dt), drift(drift), bound(bound) { }
+    : DMBase(dt), drift_(drift), bound_(bound) { }
 
     virtual ~DMConstDriftConstBound() {}
 
+    virtual value_t drift(size_t n) const  { return drift_; }
+    virtual value_t b_lo(size_t n) const   { return -bound_; }
+    virtual value_t b_up(size_t n) const   { return bound_; }
+
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
     virtual value_t pdfu(value_t t)
-    { return fpt_symup(t, 4 * bound * bound, drift * drift / 2, drift * bound); }
+    { return fpt_symup(t, 4 * bound_ * bound_, drift_ * drift_ / 2, drift_ * bound_); }
     virtual value_t pdfl(value_t t)
-    { return exp(- 2 * drift * bound) * pdfu(t); }
+    { return exp(- 2 * drift_ * bound_) * pdfu(t); }
 
 private:
-    value_t drift;
-    value_t bound;
+    value_t drift_;
+    value_t bound_;
 
     static constexpr double SERIES_ACC = 1e-29;
 
@@ -184,21 +197,25 @@ private:
 class DMConstDriftConstABound : public DMBase {
 public:
     DMConstDriftConstABound(value_t drift, value_t b_lo, value_t b_up, value_t dt)
-    : DMBase(dt), drift(drift), b_up(b_up), b_lo(b_lo) {}
+    : DMBase(dt), drift_(drift), b_up_(b_up), b_lo_(b_lo) {}
 
     virtual ~DMConstDriftConstABound() {}
 
+    virtual value_t drift(size_t n) const  { return drift_; }
+    virtual value_t b_lo(size_t n) const   { return b_lo_; }
+    virtual value_t b_up(size_t n) const   { return b_up_; }
+
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
     virtual value_t pdfu(value_t t)
-    { return fpt_asymup(t, pow(b_up - b_lo, 2), drift * drift / 2,
-                        drift * b_up, -b_lo / (b_up - b_lo));  }
+    { return fpt_asymup(t, pow(b_up_ - b_lo_, 2), drift_ * drift_ / 2,
+                        drift_ * b_up_, -b_lo_ / (b_up_ - b_lo_));  }
     virtual value_t pdfl(value_t t)
-    { return fpt_asymlo(t, pow(b_up - b_lo, 2), drift * drift / 2,
-                        drift * b_lo, -b_lo / (b_up - b_lo)); }
+    { return fpt_asymlo(t, pow(b_up_ - b_lo_, 2), drift_ * drift_ / 2,
+                        drift_ * b_lo_, -b_lo_ / (b_up_ - b_lo_)); }
 
 private:
-    value_t drift;
-    value_t b_up, b_lo;
+    value_t drift_;
+    value_t b_up_, b_lo_;
 
     static constexpr double SERIES_ACC = 1e-29;
 
@@ -241,15 +258,19 @@ private:
 class DMConstDriftVarBound : public DMBase {
 public:
     DMConstDriftVarBound(value_t drift, const ExtArray& bound, value_t dt)
-    : DMBase(dt), drift(drift), bound(bound) {}
+    : DMBase(dt), drift_(drift), bound_(bound) {}
 
     virtual ~DMConstDriftVarBound() {}
+
+    virtual value_t drift(size_t n) const  { return drift_; }
+    virtual value_t b_lo(size_t n) const   { return -bound_[n]; }
+    virtual value_t b_up(size_t n) const   { return bound_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
 private:
-    value_t drift;
-    ExtArray bound;
+    value_t drift_;
+    ExtArray bound_;
 };
 
 
@@ -257,14 +278,18 @@ private:
 class DMVarDriftVarBound : public DMBase {
 public:
     DMVarDriftVarBound(const ExtArray& drift, const ExtArray& bound, value_t dt)
-    : DMBase(dt), drift(drift), bound(bound) {}
+    : DMBase(dt), drift_(drift), bound_(bound) {}
 
     virtual ~DMVarDriftVarBound() {}
+
+    virtual value_t drift(size_t n) const  { return drift_[n]; }
+    virtual value_t b_lo(size_t n) const   { return -bound_[n]; }
+    virtual value_t b_up(size_t n) const   { return bound_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
 private:
-    ExtArray drift, bound;
+    ExtArray drift_, bound_;
 };
 
 
@@ -273,15 +298,19 @@ class DMWVarDriftVarBound : public DMBase {
 public:
     DMWVarDriftVarBound(const ExtArray& drift, const ExtArray& bound, 
                         value_t k, value_t dt)
-    : DMBase(dt), drift(drift), bound(bound), k(k) {}
+    : DMBase(dt), drift_(drift), bound_(bound), k_(k) {}
 
     virtual ~DMWVarDriftVarBound() {}
+
+    virtual value_t drift(size_t n) const  { return drift_[n]; }
+    virtual value_t b_lo(size_t n) const   { return -bound_[n]; }
+    virtual value_t b_up(size_t n) const   { return bound_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
 private:
-    ExtArray drift, bound;
-    value_t k;
+    ExtArray drift_, bound_;
+    value_t k_;
 };
 
 
@@ -293,15 +322,20 @@ public:
                    const ExtArray& b_lo, const ExtArray& b_up,
                    const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                    value_t dt)
-    : DMBase(dt), drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
-      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv) {}
+    : DMBase(dt), drift_(drift), sig2_(sig2), b_lo_(b_lo), b_up_(b_up),
+      b_lo_deriv_(b_lo_deriv), b_up_deriv_(b_up_deriv) {}
 
     virtual ~DMGeneralDeriv() {}
+
+    virtual value_t sig2(size_t n) const   { return sig2_[n]; }
+    virtual value_t drift(size_t n) const  { return drift_[n]; }
+    virtual value_t b_lo(size_t n) const   { return b_lo_[n]; }
+    virtual value_t b_up(size_t n) const   { return b_up_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
 private:
-    ExtArray drift, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv;
+    ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;
 };
 
 
@@ -313,16 +347,21 @@ public:
                        const ExtArray& b_lo, const ExtArray& b_up,
                        const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                        value_t invleak, value_t dt)
-    : DMBase(dt), drift(drift), sig2(sig2), b_lo(b_lo), b_up(b_up),
-      b_lo_deriv(b_lo_deriv), b_up_deriv(b_up_deriv), invleak(invleak) {}
+    : DMBase(dt), drift_(drift), sig2_(sig2), b_lo_(b_lo), b_up_(b_up),
+      b_lo_deriv_(b_lo_deriv), b_up_deriv_(b_up_deriv), invleak_(invleak) {}
 
     virtual ~DMGeneralLeakDeriv() {}
+
+    virtual value_t sig2(size_t n) const   { return sig2_[n]; }
+    virtual value_t drift(size_t n) const  { return drift_[n]; }
+    virtual value_t b_lo(size_t n) const   { return b_lo_[n]; }
+    virtual value_t b_up(size_t n) const   { return b_up_[n]; }
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
 private:
-    ExtArray drift, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv;
-    value_t invleak;
+    ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;
+    value_t invleak_;
 };
 
 
