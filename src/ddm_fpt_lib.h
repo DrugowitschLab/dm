@@ -160,15 +160,26 @@ private:
 };
 
 
-// TODO: refactor DMConstDriftConstBound and DMConstDriftConstABound to have
-// a common parent class that handles some of the series expansion code.
-// TODO: for both classes, introduce caching of c1,c2,.. constants.
+// base class for diffusion models with constant drift/bound
+class DMConstBase : public DMBase {
+public:
+    DMConstBase(value_t dt)
+    : DMBase(dt) {}
+protected:
+    static constexpr double SERIES_ACC = 1e-29;
+
+    // choose between two series expansions, from Navarro & Fuss (2009), Eq. (13)
+    static bool useshorttseries(value_t t, value_t tol)
+    { return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
+             sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0; }
+};
+
 
 // diffusion model with constant drift and constant symmetric bounds
-class DMConstDriftConstBound : public DMBase {
+class DMConstDriftConstBound : public DMConstBase {
 public:
     DMConstDriftConstBound(value_t drift, value_t bound, value_t dt)
-    : DMBase(dt), drift_(drift), bound_(bound) { }
+    : DMConstBase(dt), drift_(drift), bound_(bound), pdf_consts_() { }
 
     virtual ~DMConstDriftConstBound() {}
 
@@ -178,20 +189,35 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
     virtual value_t pdfu(value_t t)
-    { return fpt_symup(t, 4 * bound_ * bound_, drift_ * drift_ / 2, drift_ * bound_); }
+    { compute_pdf_consts(); 
+      return fpt_symup(t, pdf_consts_->c1(), pdf_consts_->c2(), pdf_consts_->c3()); }
     virtual value_t pdfl(value_t t)
-    { return exp(- 2 * drift_ * bound_) * pdfu(t); }
+    { compute_pdf_consts(); 
+      return pdf_consts_->c4() * 
+             fpt_symup(t, pdf_consts_->c1(), pdf_consts_->c2(), pdf_consts_->c3()); }
 
 private:
     value_t drift_;
     value_t bound_;
 
-    static constexpr double SERIES_ACC = 1e-29;
+    class PDFConsts {
+    public:
+        PDFConsts(value_t drift, value_t bound)
+        : c1_(4 * bound * bound), c2_(drift * drift / 2),
+          c3_(drift * bound) { c4_ = exp(-2 * c3_); }
+        value_t c1() const { return c1_; }
+        value_t c2() const { return c2_; }
+        value_t c3() const { return c3_; }
+        value_t c4() const { return c4_; }
+    private:
+        value_t c1_, c2_, c3_, c4_;
+    };
 
-    // choose between two series expansions, from Navarro & Fuss (2009), Eq. (13)
-    static bool useshorttseries(value_t t, value_t tol)
-    { return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
-             sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0; }
+    std::shared_ptr<PDFConsts> pdf_consts_;
+
+    void compute_pdf_consts()
+    { if (!pdf_consts_) pdf_consts_.reset(new PDFConsts(drift_, bound_)); }
+
     /** fpt_symup - fpt density at upper boundary, symmetric bounds
      * The required arguments are
      * c1 = 4 * bound^2
@@ -216,10 +242,10 @@ private:
 
 
 // diffusion model with constant drift and constant asymmetric bounds
-class DMConstDriftConstABound : public DMBase {
+class DMConstDriftConstABound : public DMConstBase {
 public:
     DMConstDriftConstABound(value_t drift, value_t b_lo, value_t b_up, value_t dt)
-    : DMBase(dt), drift_(drift), b_up_(b_up), b_lo_(b_lo) {}
+    : DMConstBase(dt), drift_(drift), b_up_(b_up), b_lo_(b_lo), pdf_consts_() {}
 
     virtual ~DMConstDriftConstABound() {}
 
@@ -229,22 +255,39 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
     virtual value_t pdfu(value_t t)
-    { return fpt_asymup(t, pow(b_up_ - b_lo_, 2), drift_ * drift_ / 2,
-                        drift_ * b_up_, -b_lo_ / (b_up_ - b_lo_));  }
+    { compute_pdf_consts();
+      return fpt_asymup(t, pdf_consts_->c1(), pdf_consts_->c2(), 
+                        pdf_consts_->c3(), pdf_consts_->w()); }
     virtual value_t pdfl(value_t t)
-    { return fpt_asymlo(t, pow(b_up_ - b_lo_, 2), drift_ * drift_ / 2,
-                        drift_ * b_lo_, -b_lo_ / (b_up_ - b_lo_)); }
+    { compute_pdf_consts();
+      return fpt_asymlo(t, pdf_consts_->c1(), pdf_consts_->c2(), 
+                        pdf_consts_->c4(), pdf_consts_->w()); }
 
 private:
     value_t drift_;
     value_t b_up_, b_lo_;
 
-    static constexpr double SERIES_ACC = 1e-29;
+    class PDFConsts {
+    public:
+        PDFConsts(value_t drift, value_t b_lo, value_t b_up)
+        : c2_(drift * drift / 2), c3_(drift * b_up), c4_(drift * b_lo)
+        { const value_t bdiff = b_up - b_lo; 
+          c1_ = bdiff * bdiff;
+          w_ = -b_lo / bdiff; }
+        value_t c1() const { return c1_; }
+        value_t c2() const { return c2_; }
+        value_t c3() const { return c3_; }
+        value_t c4() const { return c4_; }
+        value_t w()  const { return w_; }
+    private:
+        value_t c1_, c2_, c3_, c4_, w_;
+    };
 
-    // choose between two series expansions, from Navarro & Fuss (2009), Eq. (13)
-    static bool useshorttseries(value_t t, value_t tol)
-    { return (2.0 + sqrt(-2 * t * log(2 * tol * sqrt(TWOPI * t))) < 
-             sqrt(- 2 * log(PI * t * tol) / (t * PISQR))) ? 1 : 0; }
+    std::shared_ptr<PDFConsts> pdf_consts_;
+
+    void compute_pdf_consts()
+    { if (!pdf_consts_) pdf_consts_.reset(new PDFConsts(drift_, b_lo_, b_up_)); }
+
     /** fpt_asymup - fpt for upper bound, for const drift/bounds
      * The required arguments are
      * c1 = (bu - bl)^2

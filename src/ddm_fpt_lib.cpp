@@ -172,10 +172,11 @@ void DMConstDriftConstBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
 
-    const value_t c1 = 4 * (bound_ * bound_);
-    const value_t c2 = (drift_ * drift_) / 2;
-    const value_t c3 = drift_ * bound_;
-    const value_t c4 = exp(-2 * c3);
+    compute_pdf_consts();
+    const value_t c1 = pdf_consts_->c1();
+    const value_t c2 = pdf_consts_->c2();
+    const value_t c3 = pdf_consts_->c3();
+    const value_t c4 = pdf_consts_->c4();
 
     value_t t = dt_;
     for (int i = 0; i < n; ++i) {
@@ -213,12 +214,12 @@ void DMConstDriftConstABound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
 
-    const value_t bdiff = b_up_ - b_lo_;
-    const value_t c1 = bdiff * bdiff;
-    const value_t c2 = drift_ * drift_ / 2;
-    const value_t c3 = drift_ * b_up_;
-    const value_t c4 = drift_ * b_lo_;
-    const value_t w = - b_lo_ / bdiff;
+    compute_pdf_consts();
+    const value_t c1 = pdf_consts_->c1();
+    const value_t c2 = pdf_consts_->c2();
+    const value_t c3 = pdf_consts_->c3();
+    const value_t c4 = pdf_consts_->c4();
+    const value_t w = pdf_consts_->w();
 
     value_t t = dt_;
     for (int i = 0; i < n; ++i) {
