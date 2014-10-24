@@ -16,6 +16,9 @@
 #include<limits>
 #include<random>
 
+typedef std::mt19937 dm_rngeng_t;
+typedef double dm_value_t;
+
 /**
  * An array of doubles that returns values beyond its size.
  *
@@ -30,7 +33,7 @@
  **/
 class ExtArray {
 public:
-    typedef double value_t;
+    typedef dm_value_t value_t;
     typedef std::shared_ptr<value_t> data_t;
     typedef int size_t;
 
@@ -82,15 +85,76 @@ private:
 };
 
 
+// base class for fast diffusion model sampling
+class FastDMSamplingBase {
+public:
+    typedef dm_value_t value_t;
+    typedef dm_rngeng_t rngeng_t;
+
+    virtual value_t rand(rngeng_t& rngeng) = 0;
+
+protected:
+    static constexpr double PI = 3.14159265358979323846;
+
+    static bool acceptt(value_t t, value_t zf, value_t C2);
+};
+
+
+// fast diffusion model fpt sampling with normal/exponential proposal density
+class FastDMSamplingNormExp : public FastDMSamplingBase {
+public:
+    FastDMSamplingNormExp(value_t drift)
+    : mu2_(drift * drift)
+    {  const value_t t = 0.12 + exp(- fabs(drift) / 3) / 2;
+       a_ = (3 + sqrt(9 + 4 * mu2_)) / 6;
+       sqrtamu_ = sqrt((a_ - 1) * mu2_ / a_);
+       fourmu2pi_ = (4 * mu2_ + PI * PI) / 8;
+       Cf1s_ = sqrt(a_) * exp(-sqrtamu_);
+       Cf1l_ = PI / (4 * fourmu2pi_);
+       CF1st_ = Cf1s_ * erfc(1 / sqrt(2 * a_ * t));
+       F1lt_ = - expm1(-t * fourmu2pi_);
+       F1inf_ = CF1st_ + Cf1l_ * (1 - F1lt_);
+    }
+
+    virtual value_t rand(rngeng_t& rngeng);
+
+private:
+    value_t mu2_, a_, sqrtamu_, fourmu2pi_;
+    value_t Cf1s_, CF1st_, Cf1l_, F1lt_, F1inf_;
+
+    // returns the inverse of the complementary error function
+    static value_t erfcinv(value_t P);
+    static value_t rational_invccdf_approx(value_t t);
+};
+
+
+// fast diffusion model fpt sampling with inverse-normal proposal density
+class FastDMSamplingInvNorm : public FastDMSamplingBase {
+public:
+    FastDMSamplingInvNorm(value_t drift)
+    : invabsmu_(1 / fabs(drift)), invmu2_(1 / (drift * drift)) {}
+
+    virtual value_t rand(rngeng_t& rngeng);
+private:
+    value_t invabsmu_, invmu2_;
+
+    // samples inverse-normal with lambda = 1, mean = mu, mu > 0
+    static value_t randin(rngeng_t& rngeng, value_t mu, value_t mu2);
+};
+
+
+// single sample from diffusion model
 class DMSample {
 public:
-    DMSample(double t, bool upper_bound)
+    typedef dm_value_t value_t;
+
+    DMSample(value_t t, bool upper_bound)
     : t_(t), upper_bound_(upper_bound) {}
 
-    double t() const            { return t_; }
+    value_t t() const           { return t_; }
     bool upper_bound() const    { return upper_bound_; }
 private:
-    double t_;
+    value_t t_;
     bool upper_bound_;
 };
 
@@ -98,9 +162,9 @@ private:
 // diffusion model base class
 class DMBase {
 public:
-    typedef double value_t;
+    typedef dm_value_t value_t;
     typedef int size_t;
-    typedef std::mt19937 rngeng_t;
+    typedef dm_rngeng_t rngeng_t;
 
     DMBase(value_t dt)
     : dt_(dt), sqrt_dt_(sqrt(dt)) { }
@@ -120,7 +184,7 @@ public:
     virtual value_t pdfl(value_t t);
 
     // functions to sample first-passage times and choices
-    virtual DMSample rand(rngeng_t& rngeng) const;
+    virtual DMSample rand(rngeng_t& rngeng);
 
     /** normalising the mass, such that (sum(g1) + sum(g2) * delta_t = 1 
      *
@@ -179,7 +243,7 @@ protected:
 class DMConstDriftConstBound : public DMConstBase {
 public:
     DMConstDriftConstBound(value_t drift, value_t bound, value_t dt)
-    : DMConstBase(dt), drift_(drift), bound_(bound), pdf_consts_() { }
+    : DMConstBase(dt), drift_(drift), bound_(bound), fpt_sampler_(), dm_consts_() {}
 
     virtual ~DMConstDriftConstBound() {}
 
@@ -189,34 +253,39 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
     virtual value_t pdfu(value_t t)
-    { compute_pdf_consts(); 
-      return fpt_symup(t, pdf_consts_->c1(), pdf_consts_->c2(), pdf_consts_->c3()); }
+    { compute_dm_consts(); 
+      return fpt_symup(t, dm_consts_->c1(), dm_consts_->c2(), dm_consts_->c3()); }
     virtual value_t pdfl(value_t t)
-    { compute_pdf_consts(); 
-      return pdf_consts_->c4() * 
-             fpt_symup(t, pdf_consts_->c1(), pdf_consts_->c2(), pdf_consts_->c3()); }
+    { compute_dm_consts(); 
+      return dm_consts_->c4() * 
+             fpt_symup(t, dm_consts_->c1(), dm_consts_->c2(), dm_consts_->c3()); }
+
+    virtual DMSample rand(rngeng_t& rngeng);
 
 private:
     value_t drift_;
     value_t bound_;
+    std::shared_ptr<FastDMSamplingBase> fpt_sampler_;
 
-    class PDFConsts {
+    class DMConsts {
     public:
-        PDFConsts(value_t drift, value_t bound)
+        DMConsts(value_t drift, value_t bound)
         : c1_(4 * bound * bound), c2_(drift * drift / 2),
-          c3_(drift * bound) { c4_ = exp(-2 * c3_); }
+          c3_(drift * bound)
+        { c4_ = exp(-2 * c3_);  c5_ = 1 / (1 + exp(-2 * c3_)); }
         value_t c1() const { return c1_; }
         value_t c2() const { return c2_; }
         value_t c3() const { return c3_; }
         value_t c4() const { return c4_; }
+        value_t c5() const { return c5_; }
     private:
-        value_t c1_, c2_, c3_, c4_;
+        value_t c1_, c2_, c3_, c4_, c5_;
     };
 
-    std::shared_ptr<PDFConsts> pdf_consts_;
+    std::shared_ptr<DMConsts> dm_consts_;
 
-    void compute_pdf_consts()
-    { if (!pdf_consts_) pdf_consts_.reset(new PDFConsts(drift_, bound_)); }
+    void compute_dm_consts()
+    { if (!dm_consts_) dm_consts_.reset(new DMConsts(drift_, bound_)); }
 
     /** fpt_symup - fpt density at upper boundary, symmetric bounds
      * The required arguments are
@@ -373,7 +442,7 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
-    virtual DMSample rand(rngeng_t& rngeng) const;
+    virtual DMSample rand(rngeng_t& rngeng);
 
 private:
     ExtArray drift_, bound_;
@@ -401,7 +470,7 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
-    virtual DMSample rand(rngeng_t& rngeng) const;
+    virtual DMSample rand(rngeng_t& rngeng);
 
 private:
     ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;
@@ -428,7 +497,7 @@ public:
 
     virtual void pdfseq(size_t n, ExtArray& g1, ExtArray& g2);
 
-    virtual DMSample rand(rngeng_t& rngeng) const;
+    virtual DMSample rand(rngeng_t& rngeng);
 
 private:
     ExtArray drift_, sig2_, b_lo_, b_up_, b_lo_deriv_, b_up_deriv_;

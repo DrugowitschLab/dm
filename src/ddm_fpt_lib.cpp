@@ -53,6 +53,98 @@ ExtArray ExtArray::deriv(value_t dt) const
 }
 
 
+bool FastDMSamplingBase::acceptt(value_t t, value_t zf, value_t c2)
+{
+    assert(c2 > 0.06385320297074884); // log(5/3) / 16, req. for convergence
+    value_t b = exp(-c2);
+    int twok = 3;
+    while (true) {
+        if (zf >= b) return false;     // above upper bound
+        b -= twok * exp(-c2 * (twok * twok));
+        if (zf <= b) return true;      // below lower bound
+        twok += 2;
+        b += twok * exp(-c2 * (twok * twok));
+        twok += 2;
+    }
+}
+
+
+FastDMSamplingBase::value_t FastDMSamplingNormExp::rand(rngeng_t& rngeng)
+{
+    std::uniform_real_distribution<double> unif_dist;
+    while (true) {
+        const value_t P = F1inf_ * unif_dist(rngeng);
+        if (P <= CF1st_) {
+            // short-time series
+            const value_t erfcinvP = erfcinv(P / Cf1s_);
+            const value_t t = 1 / (2 * a_ * erfcinvP * erfcinvP);
+            if (acceptt(t, exp(- 0.5/(a_ * t) - sqrtamu_ + 
+                               mu2_ * t / 2) * unif_dist(rngeng),
+                        0.5 / t)) 
+                return t;
+        } else {
+            // long-time series
+            const value_t t = -log1p(- (P - CF1st_) / Cf1l_ - F1lt_) / fourmu2pi_;
+            const value_t pi2t8 = PI * PI * t / 8;
+            if (acceptt(t, exp(-pi2t8) * unif_dist(rngeng), pi2t8)) return t;
+        }
+    }
+}
+
+
+FastDMSamplingBase::value_t FastDMSamplingNormExp::erfcinv(value_t P)
+{
+    // transforming from inv ccdf of standard normal to inv erfc
+    if (P <= 1) return -0.7071067811865475 * 
+        rational_invccdf_approx(sqrt(-2.0*log(0.5 * P)));
+    else return 0.7071067811865475 * 
+        rational_invccdf_approx(sqrt(-2.0*log(1.0-0.5*P)));
+}
+
+
+// public domain code from http://www.johndcook.com/cpp_phi_inverse.html
+FastDMSamplingBase::value_t FastDMSamplingNormExp::rational_invccdf_approx(value_t t)
+{
+    // Abramowitz and Stegun formula 26.2.23.
+    // The absolute value of the error should be less than 4.5 e-4.
+    double c[] = {2.515517, 0.802853, 0.010328};
+    double d[] = {1.432788, 0.189269, 0.001308};
+    return t - ((c[2]*t + c[1])*t + c[0]) / 
+               (((d[2]*t + d[1])*t + d[0])*t + 1.0);
+}
+
+
+FastDMSamplingBase::value_t FastDMSamplingInvNorm::rand(rngeng_t& rngeng)
+{
+    std::uniform_real_distribution<double> unif_dist;
+    while (true) {
+        const value_t t = randin(rngeng, invabsmu_, invmu2_);
+        const value_t one2t = 0.5 / t;
+        if (t < 2.5) {
+            // short-time series
+            if (acceptt(t, exp(-one2t) * unif_dist(rngeng), one2t)) return t;
+        } else {
+            // long-time series
+            constexpr value_t Cl = -0.6773740579341821; // -log(pi/4)-log(2pi)/2;
+            if (acceptt(t, exp(Cl - one2t - 3 / 2 * log(t)) * unif_dist(rngeng), 
+                        PI * PI * t / 8)) return t;
+        }
+    }
+}
+
+
+FastDMSamplingBase::value_t FastDMSamplingInvNorm::randin(rngeng_t& rngeng, 
+    value_t mu, value_t mu2)
+{
+    std::normal_distribution<value_t> randn;
+    std::uniform_real_distribution<double> unif_dist;
+    const value_t z = randn(rngeng);
+    const value_t y = z * z;
+    const value_t x = mu + (mu2 * y - mu * sqrt((4 * mu + mu2 * y) * y)) / 2;
+    return unif_dist(rngeng) <= 1 / (1 + x / mu) ? x : mu2 / x;
+}
+
+
 DMBase::value_t DMBase::pdfu(value_t t)
 {
     if (t == 0.0) return 0.0;
@@ -76,7 +168,7 @@ DMBase::value_t DMBase::pdfl(value_t t)
 
 
 // generic Euler-Maruyama Method implementation, assuming sig2=1, always
-DMSample DMBase::rand(rngeng_t& rngeng) const
+DMSample DMBase::rand(rngeng_t& rngeng)
 {
     std::normal_distribution<value_t> randn;
     value_t x = drift(0) * dt_ + sqrt_dt_ * randn(rngeng);
@@ -172,11 +264,11 @@ void DMConstDriftConstBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 {
     assert(n > 0);
 
-    compute_pdf_consts();
-    const value_t c1 = pdf_consts_->c1();
-    const value_t c2 = pdf_consts_->c2();
-    const value_t c3 = pdf_consts_->c3();
-    const value_t c4 = pdf_consts_->c4();
+    compute_dm_consts();
+    const value_t c1 = dm_consts_->c1();
+    const value_t c2 = dm_consts_->c2();
+    const value_t c3 = dm_consts_->c3();
+    const value_t c4 = dm_consts_->c4();
 
     value_t t = dt_;
     for (int i = 0; i < n; ++i) {
@@ -207,6 +299,23 @@ DMBase::value_t DMConstDriftConstBound::fpt_symseries(value_t t, value_t a,
             return f * b;
         twok += 2;
     }
+}
+
+
+DMSample DMConstDriftConstBound::rand(rngeng_t& rngeng)
+{
+    compute_dm_consts();
+    if (!fpt_sampler_) {
+        // initialise sampler at first use
+        const double smu = fabs(dm_consts_->c3());
+        if (smu >= 1.0) fpt_sampler_.reset(new FastDMSamplingInvNorm(smu));
+        else fpt_sampler_.reset(new FastDMSamplingNormExp(smu));
+    }
+    // use sampler with time re-scaling for non-unit bounds
+    double t = fpt_sampler_->rand(rngeng);
+    std::uniform_real_distribution<double> unif_dist;
+    return DMSample(t * dm_consts_->c1() / 4, 
+                    unif_dist(rngeng) <= dm_consts_->c5());
 }
 
 
@@ -449,7 +558,7 @@ void DMWVarDriftVarBound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 }
 
 
-DMSample DMWVarDriftVarBound::rand(rngeng_t& rngeng) const
+DMSample DMWVarDriftVarBound::rand(rngeng_t& rngeng)
 {
     // dx = mu(t) (k mu(t) dt + dW) .
     std::normal_distribution<value_t> randn;
@@ -534,7 +643,7 @@ void DMGeneralDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 }
 
 
-DMSample DMGeneralDeriv::rand(rngeng_t& rngeng) const
+DMSample DMGeneralDeriv::rand(rngeng_t& rngeng)
 {
     std::normal_distribution<value_t> randn;
     value_t x = drift(0) * dt_ + sqrt_dt_ * sqrt(sig2(0)) * randn(rngeng);
@@ -650,7 +759,7 @@ void DMGeneralLeakDeriv::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
 }
 
 
-DMSample DMGeneralLeakDeriv::rand(rngeng_t& rngeng) const
+DMSample DMGeneralLeakDeriv::rand(rngeng_t& rngeng)
 {
     // dx = (- x(t)/tau(t) + mu(t)) dt + sig(t) dW
     std::normal_distribution<value_t> randn;
