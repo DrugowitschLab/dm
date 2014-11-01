@@ -53,6 +53,15 @@ ExtArray ExtArray::deriv(value_t dt) const
 }
 
 
+FastDMSamplingBase* FastDMSamplingBase::create(FastDMSamplingBase::value_t drift)
+{   
+    if (drift >= 1.0)
+        return new FastDMSamplingInvNorm(drift);
+    else 
+        return new FastDMSamplingNormExp(drift);
+}
+
+
 bool FastDMSamplingBase::acceptt(value_t t, value_t zf, value_t c2)
 {
     assert(c2 > 0.06385320297074884); // log(5/3) / 16, req. for convergence
@@ -308,8 +317,7 @@ DMSample DMConstDriftConstBound::rand(rngeng_t& rngeng)
     if (!fpt_sampler_) {
         // initialise sampler at first use
         const double smu = fabs(dm_consts_->c3());
-        if (smu >= 1.0) fpt_sampler_.reset(new FastDMSamplingInvNorm(smu));
-        else fpt_sampler_.reset(new FastDMSamplingNormExp(smu));
+        fpt_sampler_.reset(FastDMSamplingBase::create(smu));
     }
     // use sampler with time re-scaling for non-unit bounds
     double t = fpt_sampler_->rand(rngeng);
@@ -335,6 +343,44 @@ void DMConstDriftConstABound::pdfseq(size_t n, ExtArray& g1, ExtArray& g2)
         g1[i] = std::max(fpt_asymup(t, c1, c2, c3, w), 0.0);
         g2[i] = std::max(fpt_asymlo(t, c1, c2, c4, w), 0.0);
         t += dt_;
+    }
+}
+
+
+DMSample DMConstDriftConstABound::rand(rngeng_t& rngeng)
+{
+    value_t t = 0.0;
+    value_t x = 0.0;
+    std::uniform_real_distribution<double> unif_dist;
+    while (true) {
+        const double xlo = fabs(x - b_lo_);
+        const double xup = fabs(x - b_up_);
+        if (fabs(xlo - xup) < 1e-20) {
+            // symmetric bounds, diffusion model in [x - xup, x + xup]
+            const double mutheta = xup * drift_;
+            FastDMSamplingBase* fpt_sampler = FastDMSamplingBase::create(mutheta);
+            t += xup * xup * fpt_sampler->rand(rngeng);
+            delete fpt_sampler;
+            return DMSample(t, unif_dist(rngeng) < 1 / (1 + exp(-2 * mutheta)));
+        } else if (xlo > xup) {
+            // x closer to upper bound, diffusion model in [x - xup, x + xup]
+            const double mutheta = xup * drift_;
+            FastDMSamplingBase* fpt_sampler = FastDMSamplingBase::create(mutheta);
+            t += xup * xup * fpt_sampler->rand(rngeng);
+            delete fpt_sampler;
+            if (unif_dist(rngeng) < 1 / (1 + exp(-2 * mutheta)))
+                return DMSample(t, true);
+            x -= xup;
+        } else {
+            // x closer to lower bound, diffusion model in [x - xlo, x + xlo]
+            const double mutheta = xlo * drift_;
+            FastDMSamplingBase* fpt_sampler = FastDMSamplingBase::create(mutheta);
+            t += xlo * xlo * fpt_sampler->rand(rngeng);
+            delete fpt_sampler;
+            if (unif_dist(rngeng) > 1 / (1 + exp(-2 * mutheta)))
+                return DMSample(t, false);
+            x += xlo;
+        }
     }
 }
 

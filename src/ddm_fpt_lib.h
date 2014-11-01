@@ -91,7 +91,11 @@ public:
     typedef dm_value_t value_t;
     typedef dm_rngeng_t rngeng_t;
 
+    virtual ~FastDMSamplingBase() { }
+
     virtual value_t rand(rngeng_t& rngeng) = 0;
+
+    static FastDMSamplingBase* create(value_t drift);
 
 protected:
     static constexpr double PI = 3.14159265358979323846;
@@ -331,6 +335,8 @@ public:
     { compute_pdf_consts();
       return fpt_asymlo(t, pdf_consts_->c1(), pdf_consts_->c2(), 
                         pdf_consts_->c4(), pdf_consts_->w()); }
+
+    virtual DMSample rand(rngeng_t& rngeng);
 
 private:
     value_t drift_;
