@@ -54,3 +54,23 @@ The module provides the following functions:
  All vectors are NumPy arrays of type Float, which will be extended, if necessary. All scalars are of type Float.
  
  `mnorm` has the same effect as for the function `fpt(.)`.
+
+ ```Python
+ (t, b) = rand_sym(mu, bound, dt, n[, seed])
+ ```
+
+draws n first-passage time and bound samples from a diffusion model with drift `mu` and bounds at `-bound` and `bound`. `dt` is the time steps in which the diffusion model is simulated (if the Euler–Maruyama method) is used, and in which `mu` and `bound` are specificed.
+
+`mu` and `bound` need to be NumPy arrays of type Float. If they are shorter than the returned distribution arrays, then their last element is repeated. If they are both of size 1, fast sampling without explicitly drawing whole trajectories is performed.
+
+`dt` is a Float-type scalar value, and `n` needs to be an integer.
+
+The optional `seed` (defaults to 0) needs to be an integer and sets the random number generator seed. If not given or 0, the system random number source is used to initialise the random number generator.
+
+The returned `t` and `b` are NumPy arrays of size `n` and of type Float and Boolean, respectively. `t` contains the sampled first-passage times, and `b` is `true` if the upper bound was reached.
+
+```Python
+(t, b) = rand_asym(mu, b_lo, b_up, dt, n[, seed])
+```
+
+performs the same sampling as `rand_sym(.)`, only for asymmetric bounds at `b_lo` and `b_up`. These vectors need to be NumPy arrays of type Float. If 'mu', 'b_lo' and 'b_up' are all of size 1, fast sampling without explicitly drawing whole trajectories is performed.
