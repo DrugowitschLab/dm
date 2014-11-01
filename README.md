@@ -1,7 +1,7 @@
 dm
 ==
 
-Diffusion model first passage time distribution library in C++11, with Python and MATLAB interface.
+Diffusion model first passage time distribution and sampling library in C++11, with Python and MATLAB interface.
 
 *No guarantee is provided for the correctness of the implementation.*
 
@@ -10,7 +10,7 @@ The code is licensed under the New BSD License.
 Content
 -------
 
-The library provides classes and methods, written in C++11, that compute the first-passage time densities of diffusion models with two absorbing boundaries. Each specialised class inherits the abstract `DMBase` and provides various optimization to compute this density. The library supports leaky/weighted integration, time-varying drift rates, and time-varying symmetric or asymmetric boundaries.
+The library provides classes and methods, written in C++11, that on one hand compute the first-passage time densities of diffusion models with two absorbing boundaries, and on the other hand draws first-passage time and boundary samples. Each specialised class inherits the abstract `DMBase` and provides various optimization to compute this density and to sample. The library supports leaky/weighted integration, time-varying drift rates, and time-varying symmetric or asymmetric boundaries.
 
 In addition to the C++11 implementation, a Python and a MATLAB interface are provided. In both cases, the interface chooses between the various different library classes depending on the provided parameters.
 
@@ -52,7 +52,7 @@ If a `last` argument is provided to the constructor of `ExtArray`, this element 
 
 ## DMBase and inherited classes
 
-All diffusion model classes are based on the abstract `DMBase` class. This class defines the interface to compute first-passage time densities, and provides various factory function to create diffusion models. For time-varying drifts/bounds, the corresponding vectors need to be specified in steps of *dt*, where *dt* is provided upon construction.
+All diffusion model classes are based on the abstract `DMBase` class. This class defines the interface to compute first-passage time densities and to draw samples, and provides various factory function to create diffusion models. For time-varying drifts/bounds, the corresponding vectors need to be specified in steps of *dt*, where *dt* is provided upon construction.
 
 The currently provided factory functions are:
 
@@ -89,7 +89,14 @@ double pdfl(double t);
 
 `pdfu(t)` and `pdfl(t)` return *g_u(t)* and *g_l(t)*, respectively. **WARNING**: by default, they call `pdfseq(n,..)` with `n > t / dt` and interpolate between the returned values. If the first-passage time densities need to be computed for both boundaries or multiple times, it is always more efficient to call `pdfseq(.)` directly. Only the `DMConstDriftConstBound` and `DMConstDriftConstABount` classes contain specialised implementations of `pdfu(t)` and `pdfl(t)` that are faster than a single call to `pdfseq(.)`.
 
-`DMBase` provides the following convenience method:
+`DMBase` provides the following method to draw first-passage time and boundary samples:
+
+```C++
+DMSample rand(rngeng_t rngeng);
+```
+This method returns a single diffusion model sample, where `rngeng` is and C++11 random number generator engine of type `DMBase::rngeng_t`. The returned sample is of type DMSample, which provides two methods. The method `t()` returns the first-passage time of the sample, and the method `upper_bound()` returns `true` if the upper boundary was reached, and `false` otherwise.
+
+In addition to the above, `DMBase` provides the following convenience method:
 
 ```C++
 void DMBase::mnorm(ExtArray& g1, ExtArray& g2);
@@ -135,3 +142,4 @@ and
 
 Navarro DJ and Fuss IG (2009). Fast and accurate calculations for first-passage times in Wiener diffusion models. *Journal of Mathematical Psychology*, 53, 222-230.
 
+Samples are in the most general case drawn by simulating trajectories by the Euler–Maruyama method. For diffusion models with constant drift and (symmetric or asymmetric) boundaries, a significantly faster method based on rejection sampling is used.
