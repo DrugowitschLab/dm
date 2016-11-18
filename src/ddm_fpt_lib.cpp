@@ -238,7 +238,7 @@ DMBase* DMBase::create(const ExtArray& drift, const ExtArray& sig2,
 {
     const bool infinvleak = isinf(invleak);
     if (infinvleak) {
-        const bool unit_sig2 = (sig2.isconst() <= 1 && sig2[0] == 1.0);
+        const bool unit_sig2 = (sig2.isconst() && sig2[0] == 1.0);
         const bool constbounds = (b_lo.isconst() && b_up.isconst());
         if (unit_sig2 && constbounds) {
             const bool symconstbounds = (constbounds && b_up[0] == -b_up[0]);
