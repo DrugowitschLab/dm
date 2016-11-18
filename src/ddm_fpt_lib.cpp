@@ -813,7 +813,7 @@ DMSample DMGeneralLeakDeriv::rand(rngeng_t& rngeng)
     size_t n = 1;
     int cb = crossed_bounds(x, 1);
     while (!cb) {
-        x = (drift(n) - invleak_ * x) * dt_ + sqrt_dt_ * sqrt(sig2(n)) * randn(rngeng);
+        x += (drift(n) - invleak_ * x) * dt_ + sqrt_dt_ * sqrt(sig2(n)) * randn(rngeng);
         n += 1;
         cb = crossed_bounds(x, n);
     }
