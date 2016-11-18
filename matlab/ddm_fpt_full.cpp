@@ -53,7 +53,6 @@
 
 #include <string>
 #include <algorithm>
-#include <limits>
 
 
 /** the gateway function */
@@ -121,7 +120,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     /* Process possible 9th non-string argument */
     int cur_argin = 8;
     bool has_leak = false;
-    double inv_leak = std::numeric_limits<double>::infinity();
+    double inv_leak = 0.0;
     if (nrhs > cur_argin && !mxIsChar(prhs[cur_argin])) {
         if (!MEX_ARGIN_IS_REAL_DOUBLE(cur_argin))
             mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
@@ -130,7 +129,7 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         if (inv_leak < 0.0)
             mexErrMsgIdAndTxt("ddm_fpt_full:WrongInput",
                               "inv_leak needs to be non-negative");
-        has_leak = true;
+        has_leak = (inv_leak != 0.0);
         ++cur_argin;
     }
         
