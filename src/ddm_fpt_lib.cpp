@@ -236,7 +236,7 @@ DMBase* DMBase::create(const ExtArray& drift, const ExtArray& sig2,
                        const ExtArray& b_lo_deriv, const ExtArray& b_up_deriv,
                        value_t dt, value_t invleak)
 {
-    const bool infinvleak = isinf(invleak);
+    const bool infinvleak = std::isinf(invleak);
     if (infinvleak) {
         const bool unit_sig2 = (sig2.isconst() && sig2[0] == 1.0);
         const bool constbounds = (b_lo.isconst() && b_up.isconst());
