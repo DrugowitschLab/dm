@@ -241,7 +241,7 @@ DMBase* DMBase::create(const ExtArray& drift, const ExtArray& sig2,
         const bool unit_sig2 = (sig2.isconst() && sig2[0] == 1.0);
         const bool constbounds = (b_lo.isconst() && b_up.isconst());
         if (unit_sig2 && constbounds) {
-            const bool symconstbounds = (constbounds && b_up[0] == -b_up[0]);
+            const bool symconstbounds = (constbounds && b_lo[0] == -b_up[0]);
             if (drift.isconst()) {
                 if (symconstbounds)
                     // const drift, const sym bounds, unit variance
