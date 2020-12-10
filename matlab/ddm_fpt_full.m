@@ -1,6 +1,6 @@
-[g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, ...
+function [g1, g2] = ddm_fpt_full(mu, sig2, b_lo, b_up, b_lo_deriv, b_up_deriv, ...
                         delta_t, t_max, inv_leak)
-%% computes the diffusion model first-passage time distributions
+% computes the diffusion model first-passage time distributions
 %
 % The applied method is described in Smith (2000) "Stochastic Dynamic
 % Models of Response Time and Accuracy: A Foundational Primer" and other
@@ -46,4 +46,4 @@
 % All rights reserved.
 % See the file LICENSE for licensing information.
 
-error('Not implemented as M-file. Make sure that mex file is complied');
+error('Not implemented as M-file. Make sure that mex file is compiled');
