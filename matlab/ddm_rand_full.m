@@ -1,5 +1,5 @@
-[t, b] = ddm_rand_full(mu, sig2, b_lo, b_up, delta_t, n, inv_leak, seed)
-%% draw first-passage time samples and boundaries from a diffusion model.
+function [t, b] = ddm_rand_full(mu, sig2, b_lo, b_up, delta_t, n, inv_leak, seed)
+% draw first-passage time samples and boundaries from a diffusion model.
 %
 % Unless drift, variance and bounds are constant, the method uses the
 % Euler-Maruyama method to simulate the diffusion model.
@@ -29,4 +29,4 @@
 % All rights reserved.
 % See the file LICENSE for licensing information.
 
-error('Not implemented as M-file. Make sure that mex file is complied');
+error('Not implemented as M-file. Make sure that mex file is compiled');
